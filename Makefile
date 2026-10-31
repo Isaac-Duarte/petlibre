@@ -124,6 +124,7 @@ APP_INSTALLER = $(APP)/assets/installer
 app-installer-input:
 	@test -n "$(REVIEW)" -a -n "$(MANIFEST)" || \
 		{ echo "usage: make app-installer-input REVIEW=<review directory> MANIFEST=<signed update manifest>"; exit 1; }
+	cargo run --quiet --locked --release -p wellfed-build -- installer-check --review $(REVIEW) --manifest $(MANIFEST)
 	cp $(REVIEW)/review.json $(REVIEW)/build-manifest.json $(REVIEW)/image.bin $(APP_INSTALLER)/
 	cp $(MANIFEST) $(APP_INSTALLER)/update.manifest
 	@echo "WELLFED_INSTALLER_PIN=$$(sha256sum $(APP_INSTALLER)/review.json | cut -d' ' -f1):$$(sha256sum $(APP_INSTALLER)/update.manifest | cut -d' ' -f1):<the manifest's version>"

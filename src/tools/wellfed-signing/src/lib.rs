@@ -60,6 +60,25 @@ mod error;
 
 pub use error::{Error, FrozenError, ImageError, KeyError, Result};
 
+fn require_built_in_signer(built_in: &str, build_id: &[u8; 32], manifest: &[u8]) -> Result<()> {
+    let signed = offer::parse_manifest(manifest).map_err(Error::NotManifest)?;
+    require(signed.manifest.build_id == *build_id, || {
+        FrozenError::OtherBuild {
+            manifest: hex::encode(&signed.manifest.build_id),
+            review: hex::encode(build_id),
+        }
+    })?;
+
+    let public = id_bytes(built_in)?;
+    require(signed.key_id == offer::key_id(&public), || {
+        FrozenError::NotBuiltInSigner {
+            signer: hex::encode(&signed.key_id),
+            built_in: hex::encode(&offer::key_id(&public)),
+        }
+    })?;
+    Ok(())
+}
+
 /// The bench key's root-relative path. Firmware builds embed its public half.
 pub const KEY_PATH: &str = "private/ota-key.json";
 
@@ -246,6 +265,19 @@ impl Frozen {
             build_id,
             manifest: verified.manifest,
         })
+    }
+
+    /// Refuse a `manifest` an installer could not rely on for this image.
+    /// An installer carries its manifest from before the feeder has any
+    /// enrolled key to trust, so only the image's built-in key can sign it.
+    pub fn require_installable(&self, manifest: &[u8]) -> Result<()> {
+        let built_in = self
+            .manifest
+            .as_ref()
+            .and_then(|manifest| manifest.ota_public_key.as_deref())
+            .ok_or(FrozenError::NoBuiltInKey)?;
+
+        require_built_in_signer(built_in, &self.build_id, manifest)
     }
 
     /// The pinned stock image as given, without a review directory: an
@@ -625,6 +657,33 @@ mod tests {
         let other = dir.path().join("release.json");
         fs::write(&other, text.to_string()).unwrap();
         assert!(matches!(Key::load(&other), Err(Error::Formats(_))));
+    }
+
+    #[test]
+    fn an_installer_takes_only_a_manifest_the_built_in_key_signed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (built_in, other) = (dir.path().join("built-in"), dir.path().join("other"));
+        let public = keygen(&built_in, KeyScope::Bench).unwrap();
+        keygen(&other, KeyScope::Bench).unwrap();
+        let (checkout, review) = freeze(&build_image(), None);
+        let frozen = Frozen::open(checkout.path(), &review).unwrap();
+        let build = id_bytes(BUILD).unwrap();
+        let signed = |path: &Path| {
+            frozen
+                .offer(&Key::load(path).unwrap(), 9, Motion::Refused)
+                .unwrap()
+        };
+
+        require_built_in_signer(&public, &build, &signed(&built_in)).unwrap();
+
+        assert!(matches!(
+            require_built_in_signer(&public, &build, &signed(&other)),
+            Err(Error::Frozen(FrozenError::NotBuiltInSigner { .. }))
+        ));
+        assert!(matches!(
+            require_built_in_signer(&public, &[0; 32], &signed(&built_in)),
+            Err(Error::Frozen(FrozenError::OtherBuild { .. }))
+        ));
     }
 
     #[test]

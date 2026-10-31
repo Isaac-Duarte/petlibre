@@ -60,6 +60,16 @@ pub enum FrozenError {
     BuildId,
     #[error("image.bin does not carry the reviewed build's identity")]
     NoIdentity { identity: String },
+    /// A manifest for another build than this review's.
+    #[error("The manifest is for build {manifest}, the review for {review}")]
+    OtherBuild { manifest: String, review: String },
+    /// The image names no key of its own to compare a signer with.
+    #[error("The review's build records no built-in update key")]
+    NoBuiltInKey,
+    /// A signer the image trusts only if a feeder has it enrolled, and a
+    /// handover from stock clears those.
+    #[error("The manifest is signed by key {signer}, the image has key {built_in} built in")]
+    NotBuiltInSigner { signer: String, built_in: String },
     /// A motion policy the caller did not name as the one it attends.
     #[error("Image drives the motor ({policy}); sign it only attending that policy")]
     Unattended { policy: String },

@@ -105,6 +105,14 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Refuse a signed manifest an installer could not use with this frozen
+    /// review: for another build, or not signed by the image's built-in key.
+    InstallerCheck {
+        #[arg(long)]
+        review: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+    },
     /// Sign a downgrade statement: the feeder with this identity key may
     /// install this version 2 manifest while its floor is `floor`. Stock
     /// always needs one, as does any version at or below the floor.
@@ -316,6 +324,10 @@ fn run(command: Command) -> Result<()> {
                 frozen.build_id(),
                 output.display()
             );
+        }
+        Command::InstallerCheck { review, manifest } => {
+            let frozen = Frozen::open(&repo.root, &repo.root.join(review))?;
+            frozen.require_installable(&std::fs::read(repo.root.join(manifest))?)?;
         }
         Command::Downgrade {
             key,

@@ -17,10 +17,7 @@ use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::{
-    clock::{self, Policy},
-    config::Config,
-};
+use crate::{clock, config::Config};
 
 /// The topic channels the stock firmware posts on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,7 +224,6 @@ pub fn reply(
     channel: Channel,
     msg: &Message,
     now: DateTime<Utc>,
-    clock: Policy,
 ) -> Option<Reply> {
     let mut ack = Ack {
         cmd: &msg.cmd,
@@ -242,7 +238,7 @@ pub fn reply(
 
     match (channel, msg.cmd.as_str()) {
         (Channel::Ntp, "NTP") => {
-            let calibration = clock::calibration(config.plans.as_deref(), msg.ts, now, clock);
+            let calibration = clock::calibration(config.plans.as_deref(), msg.ts, now);
             let ntp = ntp_response(config.timezone, now, calibration.tag());
             return Some(Reply::new(topic, &ntp));
         }

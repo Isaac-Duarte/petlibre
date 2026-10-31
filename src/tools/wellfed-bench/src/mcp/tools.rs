@@ -269,14 +269,10 @@ struct InstallArgs {
     confirm_motion: bool,
     /// The installer's wellfed-stock config (init-installer).
     stock_config: String,
-    /// Stock's broker name, which the owner's resolver points here.
-    broker_name: Option<String>,
     /// The replacement is already on bank 0: start at pairing.
     #[serde(default)]
     from_bank0: bool,
     enroll_minutes: Option<u64>,
-    #[serde(default)]
-    calibrate_clock: bool,
     /// The owner key file; the installer's default otherwise.
     keys: Option<String>,
     /// The replacement's address.
@@ -889,8 +885,7 @@ pub(crate) fn agent_may_answer(prompt: &Prompt) -> Result<(), ToolError> {
         }
         // The feeder's own check of the code or the press decides, not the
         // answer, which only lets the installer ask its next question.
-        Prompt::SetOverride { .. }
-        | Prompt::RestartFeeder
+        Prompt::RestartFeeder
         | Prompt::SetupMode
         | Prompt::JoinBack
         | Prompt::KeySetupCode { .. }
@@ -1119,10 +1114,8 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
                 .value("--expect-device", args.expect_device)
                 .switch("--virtual-panel", args.virtual_panel)
                 .value("--stock-config", Some(args.stock_config))
-                .value("--broker-name", args.broker_name)
                 .switch("--from-bank0", args.from_bank0)
                 .value("--enroll-minutes", args.enroll_minutes)
-                .switch("--calibrate-clock", args.calibrate_clock)
                 .value("--keys", args.keys)
                 .value("--address", args.address)
         }
@@ -1242,8 +1235,6 @@ mod tests {
                 "review": "private/verification/r",
                 "manifest": "private/m.json",
                 "stock_config": "private/installer.json",
-                "broker_name": "broker.example.net",
-                "calibrate_clock": true,
             })),
         )
         .unwrap();
@@ -1258,9 +1249,6 @@ mod tests {
                     "private/m.json",
                     "--stock-config",
                     "private/installer.json",
-                    "--broker-name",
-                    "broker.example.net",
-                    "--calibrate-clock",
                 ]
                 .map(String::from)
                 .to_vec()
@@ -1363,10 +1351,6 @@ mod tests {
             );
         }
         for prompt in [
-            Prompt::SetOverride {
-                name: "broker.example.net".into(),
-                broker: "192.168.1.20".parse().unwrap(),
-            },
             Prompt::JoinBack,
             Prompt::PressDispense {
                 purpose: wellfed_formats::bench::prompt::DispensePurpose::EnrollUpdateKey,

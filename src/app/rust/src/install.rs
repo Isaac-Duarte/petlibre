@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
 use wellfed_client::install::{
-    DnsOverride, InstallError, Phase, Provision, STOCK_BROKER_PORT, STOCK_PAYLOAD_LEN, SetupFrame,
+    InstallError, Phase, Provision, STOCK_BROKER_PORT, STOCK_PAYLOAD_LEN, SetupFrame,
     manifest_build, manifest_version,
 };
 use wellfed_client::setup::{Credentials, Deframer, frame};
@@ -30,17 +30,18 @@ use wellfed_formats::manifest::Provisioning;
 use wellfed_install::event::{Enrollment as KeyEnrollment, Wait};
 use wellfed_install::listen::{self, Listened, UNCERTAIN_WAIT};
 use wellfed_install::{
-    Announcement, Api, Bind, Bluetooth, ClockPolicy, Discovery, Error, Event, Keys, Plan, Platform,
+    Announcement, Api, Bind, Bluetooth, Discovery, Error, Event, Keys, Plan, Platform,
     PlatformError, Prompter, Refusal, Rejection, Report, Review, SetupLink, Signer, Start,
     StockOptions, Stop, Unjoined, Unsettled,
 };
 use wellfed_session::noise::Keypair;
 
 use crate::api::install::{
-    DnsResult, ImageCheck, ImageProvisioning, InstallAnswer, InstallAsk, InstallEnd, InstallEvent,
+    ImageCheck, ImageProvisioning, InstallAnswer, InstallAsk, InstallEnd, InstallEvent,
     InstallSpec, InstallStart, InstallUpdate, ListenUpdate, PendingInstall, RequestRefusal, Resume,
     StopCase, UncertainWrite, WaitReason,
 };
+use crate::api::model::SetupRefusal;
 use crate::api::setup::CONTROL_PIECE;
 use crate::api::store::{KnownFeeder, load_store, save_store};
 
@@ -158,21 +159,6 @@ pub fn check_image(dir: &Path, pin: Option<&Pin>) -> ImageCheck {
         build: opened.build().to_string(),
         version: pin.version,
     }
-}
-
-pub async fn check_dns(name: &str, phone_ip: &str) -> DnsResult {
-    let Ok(ip) = phone_ip.parse::<IpAddr>() else {
-        return DnsResult::Unresolved;
-    };
-    let Ok(dns) = DnsOverride::new(name, SocketAddr::new(ip, STOCK_BROKER_PORT)) else {
-        return DnsResult::BadName;
-    };
-    let lookup = format!("{}:{STOCK_BROKER_PORT}", dns.name());
-    let resolved: Vec<IpAddr> = tokio::net::lookup_host(lookup)
-        .await
-        .map(|addresses| addresses.map(|address| address.ip()).collect())
-        .unwrap_or_default();
-    dns.check(&resolved).into()
 }
 
 pub fn pending(data_dir: &Path) -> PendingInstall {
@@ -299,10 +285,6 @@ pub(crate) struct AppPrompter(pub(crate) Arc<Asks>);
 impl Prompter for AppPrompter {
     async fn done(&mut self, prompt: Prompt) -> Result<(), PlatformError> {
         let ask = match prompt {
-            Prompt::SetOverride { name, broker } => InstallAsk::SetOverride {
-                name,
-                broker: broker.to_string(),
-            },
             Prompt::RestartFeeder => InstallAsk::RestartFeeder,
             Prompt::OpenRecoveryWindow => InstallAsk::OpenRecoveryWindow,
             Prompt::SetupMode => InstallAsk::JoinFeederNetwork,
@@ -495,9 +477,6 @@ impl From<Event> for InstallEvent {
     fn from(event: Event) -> Self {
         let note = |text: String| Self::Note { text };
         match event {
-            Event::DnsChecked { check, .. } => Self::DnsChecked {
-                result: check.into(),
-            },
             Event::StockServerStarted => Self::StockServerStarted,
             Event::AwaitingStock => Self::AwaitingStock,
             Event::Waiting(wait) => Self::Waiting {
@@ -643,6 +622,11 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
         Error::Setup(inner) => {
             let refusal = match inner.as_ref() {
                 Error::SetupRefused(refusal) => Some(*refusal),
+                // The feeder could not prove the code: the code was mistyped,
+                // or another device is in the way. The link itself held.
+                Error::SetupSession(wellfed_client::setup::Error::WrongCode) | Error::NoProof => {
+                    Some(SetupRefusal::WrongCode)
+                }
                 _ => None,
             };
             (StopCase::SetupFailed { refusal }, FromBank0)
@@ -776,9 +760,8 @@ fn plan(
     })?;
     let version = manifest_version(&manifest).ok_or(Error::NoManifest)?;
 
-    let reset = matches!(spec.start, InstallStart::Reset | InstallStart::FrameTaken);
+    let from_stock = matches!(spec.start, InstallStart::Reset | InstallStart::FrameTaken);
     let sends_frame = matches!(spec.start, InstallStart::Reset);
-    let from_stock = reset || matches!(spec.start, InstallStart::Dns { .. });
     let unjoined = if spec.setup_again {
         Unjoined::SetUpAgain
     } else {
@@ -827,12 +810,6 @@ fn plan(
     }
 
     let start = match &spec.start {
-        InstallStart::Dns { name } => {
-            let broker = SocketAddr::new(phone, STOCK_BROKER_PORT);
-            let dns =
-                DnsOverride::new(name, broker).map_err(|error| Error::StockServer(error.into()))?;
-            Start::Stock(Provision::Dns(dns))
-        }
         InstallStart::Reset => {
             let (ssid, password) = frame_wifi.ok_or(NotPlanned::Spec {
                 case: StopCase::NoWifiGiven,
@@ -869,12 +846,6 @@ fn plan(
         stock: StockOptions {
             config,
             enroll: ENROLL,
-            // A reset feeder has no plans, so no meal comes due in the jump.
-            clock: if spec.calibrate_clock || reset {
-                ClockPolicy::Always
-            } else {
-                ClockPolicy::Bounded
-            },
             api: Api::Off,
             // Only a phone leaving for the feeder's network loses the address.
             bind: if sends_frame {
@@ -1028,10 +999,10 @@ fn run_on_this_thread(
         }
     };
 
-    let again = if matches!(spec.start, InstallStart::Dns { .. }) {
-        Resume::FromStart
-    } else {
+    let again = if matches!(spec.start, InstallStart::Bank0) {
         Resume::FromBank0
+    } else {
+        Resume::FromStart
     };
     let (plan, keys, from_stock) = match plan(spec, keypair, pin) {
         Ok(planned) => planned,
@@ -1200,6 +1171,26 @@ mod tests {
         assert_eq!(parse_pin(short), None);
         let long: &'static str = Box::leak(format!("{hash}:{hash}:7:8").into_boxed_str());
         assert_eq!(parse_pin(long), None);
+    }
+
+    /// A code the feeder could not prove is not a dropped link: the screen
+    /// says which by this case.
+    #[test]
+    fn a_code_never_proved_is_told_from_a_broken_exchange() {
+        let wrapped = |inner: Error| stop_of(&Error::Setup(Box::new(inner)), false).0;
+        let wrong = StopCase::SetupFailed {
+            refusal: Some(SetupRefusal::WrongCode),
+        };
+
+        assert_eq!(
+            wrapped(Error::SetupSession(wellfed_client::setup::Error::WrongCode)),
+            wrong
+        );
+        assert_eq!(wrapped(Error::NoProof), wrong);
+        assert_eq!(
+            wrapped(Error::SetupSession(wellfed_client::setup::Error::Malformed)),
+            StopCase::SetupFailed { refusal: None }
+        );
     }
 
     /// The three listed cases, the uncertain request, and what a new run

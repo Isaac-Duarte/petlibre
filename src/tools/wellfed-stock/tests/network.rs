@@ -25,9 +25,8 @@ fn routing_is_scoped_to_device_mac_and_hotspot_and_blocks_its_wan_only() {
     assert!(network::rules(&config, Redirect::Broker).is_err());
 }
 
-/// The DNS route's bench run: nothing redirected, so stock reaches the
-/// broker only by the name it resolves, but its WAN stays blocked and both
-/// input accepts stay, so a failed override fails closed.
+/// Nothing redirected, so stock reaches the broker only where a setup frame
+/// named it, but its WAN stays blocked and both input accepts stay.
 #[test]
 fn without_the_redirect_the_wan_block_and_accepts_stay() {
     let mut config = common::config();

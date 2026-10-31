@@ -9,7 +9,6 @@ use chrono::{TimeZone, Utc};
 use serde_json::{Value, json};
 use uuid::Uuid;
 use wellfed_stock::{
-    clock::Policy,
     ota,
     protocol::{self, Reply},
 };
@@ -33,7 +32,7 @@ fn answer(config: &wellfed_stock::config::Config, channel: &str, message: Value)
     )
     .unwrap();
     let now = Utc.with_ymd_and_hms(2026, 10, 17, 21, 17, 41).unwrap();
-    bytes(&protocol::reply(config, channel, &message, now, Policy::Bounded).unwrap())
+    bytes(&protocol::reply(config, channel, &message, now).unwrap())
 }
 
 #[test]

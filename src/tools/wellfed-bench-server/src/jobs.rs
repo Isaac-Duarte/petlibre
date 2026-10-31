@@ -107,8 +107,8 @@ pub enum JobCommand {
     /// UART and never changes routing (`wellfed-stock network apply` is the
     /// operator's).
     StockOta(StockOtaArgs),
-    /// Stock to a replacement with `wellfed install` (DNS route or
-    /// `--from-bank0`), its questions answered on the page, with
+    /// Stock to a replacement with `wellfed install` (stock already
+    /// reaching its broker, or `--from-bank0`), its questions answered on the page, with
     /// `wellfed-bench answer` or by an agent. Restarts the
     /// feeder itself with relay 1 when the installer asks for it.
     Install(InstallArgs),

@@ -10,11 +10,8 @@
 //!   subscribed, so stock's connect burst (its version report among it)
 //!   reaches the server. Its image server serves the review for the one
 //!   request;
-//! - stock reaches the broker by DNS: the owner's resolver answers stock's
-//!   broker name with this host and the owner restarts the feeder (the run
-//!   guides it and looks the name up as advice; stock arriving at the broker
-//!   is the check); or by the setup frame: one UDP datagram, sent after the owner
-//!   joined this host to the feeder's setup access point;
+//! - stock reaches the broker by the setup frame: one UDP datagram, sent
+//!   after the owner joined this host to the feeder's setup access point;
 //! - the replacement is reached over the device API with the platform's
 //!   client key. A key the build already knows opens a session at once.
 //!   Otherwise the review's provisioning picks the route: a consumer image
@@ -71,10 +68,7 @@ pub use track::{Stop, Stopped, Unsettled};
 pub use wellfed_stock::build_info;
 /// Whether stock's clock is set even when its own reading is far off, and
 /// whether stock's server answers its loopback API.
-pub use wellfed_stock::{
-    clock::Policy as ClockPolicy,
-    server::{Api, Bind},
-};
+pub use wellfed_stock::server::{Api, Bind};
 /// Why the server would not send the install request.
 pub use wellfed_stock::{controller::Rejection, server::Refusal};
 

@@ -246,8 +246,7 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
                  own settings. Stock serves no device API: check it in stock's app, or on the \
                  broker it was provisioned to. After a Reset install it still names this \
                  computer's broker and retries forever: hold Reset for about 5 seconds and set \
-                 it up in the vendor's app. After a DNS install it returns to the vendor's cloud \
-                 once the DNS override is gone."
+                 it up in the vendor's app."
             );
             Ok(())
         }

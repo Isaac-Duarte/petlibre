@@ -80,7 +80,7 @@ The configuration format is version 1. An older configuration may still carry `m
 2. Run `network apply`.
 3. Check the counters and the actual traffic. Don't assume WAN isolation without checking.
 
-`--redirect off` (on `apply` and `preview`) leaves out only the 1883 redirect. The WAN block and both input accepts stay, so the feeder reaches the broker only by the name it resolves, as on the DNS route.
+`--redirect off` (on `apply` and `preview`) leaves out only the 1883 redirect. The WAN block and both input accepts stay, so the feeder reaches the broker only where a setup frame named it.
 
 `network remove` removes Wellfed's dedicated table and its tagged input rules. Their names are unchanged since the server was renamed, so rules applied before the rename are removed too.
 
@@ -102,28 +102,11 @@ An install needs no capture. `init-installer` writes a config with fresh secrets
 - **One or the other.** A config that names a captured device and has an enrollment beside it is refused.
 - **No redirect.** An installer's config has no hotspot interface or feeder MAC, so `network` refuses it. `ota-images` admits the enrolled feeder's address unless `--peer` is given.
 - **Stock's plans are left alone.** An installer's config holds no plan snapshot, so `GET_FEEDING_PLAN_EVENT` goes unanswered. Stock erases and rewrites its plan table on any reply that has a `plans` key, even an empty one. It does not check the code or the message ID, and it takes the message unasked. With no reply it keeps its table; it asks once and does not retry. An empty answer would erase the plans a rollback should find. The server never sends a plan message on its own: the commands it sends unasked are a closed set (`protocol::Sent`). (Static analysis of 1.1.15's KM4 image, with one UART capture of a stock install.)
-- **Stock's clock is set only when it is close.** Stock may hold the owner's plans, and we have not checked whether it runs meals that came due while its clock jumps forward. So with no snapshot, the `NTP` reply sets stock's clock (`calibrationTag`) only when stock's own clock is within 10 minutes of the server's, either way. That is no bigger a step than its vendor cloud's sync would make. Stock's `NTP` request carries its own clock in `ts`, and that alone decides. A request with no `ts`, a zero or an implausible one counts as unknown and is held; an earlier message's `ts` does not count, since it may predate a restart.
-  - **When held,** stock's clock stays where it was. Stock 1.1.15 refused an install with error 1214 while its clock was two days behind, likely for that reason. `wellfed install` then names the flag below.
-  - **`serve --calibrate-clock`** (and `wellfed install --calibrate-clock`, which passes it on) sets the clock whatever it reads. If stock's clock is far behind, stock may then run meals that came due in the jump, with real food.
-  - **The log** says, for every `NTP` request, stock's `ts` (or `unknown`), the skew in seconds, and whether the clock was set and why. A held clock adds a warning that names the flag.
-  - **A captured snapshot** keeps its own rule: an empty table always sets the clock, and a nonempty one holds it unless the flag is passed. With the flag, those captured plans may run any meals that came due in the jump.
-
-### A set-up stock, moved by DNS
-
-The consumer install moves a stock that is already set up: the owner's resolver answers stock's broker name with this server's address, and stock restarts ([moving stock by DNS](../firmware/consumer-installation.md#moving-stock-by-dns)). The server needs nothing new for it:
-
-- **Its firewall on the bench.** `network apply --redirect off` keeps the feeder's WAN block and both input accepts but redirects nothing, so stock reaches the broker only by the name it resolves, and a failed override fails closed.
-- **Its port.** Stock keeps its stored port, so `--mqtt-listen` must use port 1883 on an address the owner's resolver can name. `wellfed install --broker-name` refuses any other port.
-- **Its credentials.** Stock presents its own, as after a setup frame, so enrollment trusts it on first use the same way.
-- **No binding.** A set-up stock sends no `BINDING` when it connects (observed). A stock fresh from the setup frame does, and an installer's config answers it with a generic reply built in the server, since it has no captured one ([saving the frame](../firmware/consumer-installation.md#stocks-setup-protocol)).
-- **Its settings stay.** The server never sends `DEVICE_CONFIG_SYNC`, `WIFI_CHANGE_SERVICE` or the MQTT `RESTORE` (`protocol::Sent` is a closed set). So stock's stored broker name, Wi-Fi and plans are untouched, and removing the override returns stock to the vendor's cloud.
-- **Its clock.** A stock that was on its vendor's cloud has a clock close to the right time, so the `NTP` reply sets it ([above](#an-installers-server-trust-on-first-use)). A stock whose clock is more than 10 minutes off needs `--calibrate-clock`.
-
-Modeled: the installer's DNS step and enrollment of a never-seen identity, on the host. Not yet run on stock: a set-up stock reaching this server through a resolver override, and an install with its clock set within the bound or by `--calibrate-clock`.
-
-`wellfed-stock broker-name <file>` prints the broker name stock's settings store, from a whole flash read or the settings sector alone. The name is the vendor's, so no tracked file carries it; the bench reads it from its own flash reads.
-
-`wellfed install` ([consumer installation](../firmware/consumer-installation.md#the-installer)) runs this server as its child.
+- **Stock's clock is set.** Stock reaches an installer's broker after the Reset hold, which erased its plans, so no meal comes due while its clock jumps. Stock 1.1.15 refused an install with error 1214 while its clock was two days behind, likely for that reason.
+  - **The log** says, for every `NTP` request, stock's `ts` (or `unknown`), the skew in seconds, and whether the clock was set.
+  - **A captured nonempty table** holds the clock, with a warning: those plans may run any meals that came due in a jump. An empty one sets it.
+- **No binding from a set-up stock.** A set-up stock sends no `BINDING` when it connects (observed). A stock fresh from the setup frame does, and an installer's config answers it with a generic reply built in the server, since it has no captured one ([saving the frame](../firmware/consumer-installation.md#stocks-setup-protocol)).
+- **Its settings stay.** The server never sends `DEVICE_CONFIG_SYNC`, `WIFI_CHANGE_SERVICE` or the MQTT `RESTORE` (`protocol::Sent` is a closed set).
 
 ## The install ledger
 
@@ -194,5 +177,5 @@ A configuration written while the role existed keeps its `firmware` section. `we
 - **Observed:** local dispensing on stock 1.1.15 was demonstrated on the research unit, before stock control was removed from this server. The code is in Git history.
 - **Modeled:** `tests/protocol.rs` loads a seeding config from a file and replays its table exactly as written, with calibration held, then leaves the request unanswered once `plans` is removed.
 - **Observed (UART captures of 1.1.15, October 23 and 28, 2026, `fw40-stock-ota-05-uart-01` and `fp04-stock-idle-20261028n`):** stock's `NTP` request carries its own clock in `ts` (milliseconds, rounded to the second), and it asks once per connection. On October 28 its clock read October 26, the reply held calibration (`calibrationTag = 0`), and stock refused the install that followed with error 1214, with no download (`fpbatch-20261028n`). That the held clock caused the refusal is likely, not confirmed statically.
-- **Modeled:** `clock.rs` unit-tests the rule (within the bound either way, outside it, unknown, the flag, a captured empty and a nonempty table), and `tests/protocol.rs` answers an installer's `NTP` dated 9 minutes off, 2 days off, and 2 days off with the flag, and holds one with no `ts` or a zero after an in-bound heartbeat.
+- **Modeled:** `clock.rs` unit-tests the rule (no table, an empty one and a nonempty one).
 - **Modeled:** `tests/enroll_stack.rs` runs the real `serve`, which enrolls a simulated feeder with never-seen credentials, hears its version report, refuses a second identity and a guessed password, and after a restart without the window admits only the enrolled feeder. Not yet run against stock.

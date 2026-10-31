@@ -101,7 +101,6 @@ class _InstallScreenState extends State<InstallScreen> {
         ),
         InstallStage.reset => _Reset(flow: _flow),
         InstallStage.handover => _Handover(flow: _flow, onLeave: _leave),
-        InstallStage.record => _Record(flow: _flow, onLeave: _leave),
         InstallStage.confirm => _Confirm(flow: _flow, onLeave: _leave),
         InstallStage.sending => _Sending(flow: _flow),
         InstallStage.claim => _Claim(flow: _flow),
@@ -141,61 +140,7 @@ class _Fact extends StatelessWidget {
   }
 }
 
-/// One way for the feeder to find this phone.
-class _RouteChoice extends StatelessWidget {
-  const _RouteChoice({
-    required this.title,
-    required this.body,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String title;
-  final String body;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Panel(
-        highlight: selected,
-        padding: const EdgeInsets.all(Space.s4),
-        child: Semantics(
-          button: true,
-          selected: selected,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: Sizes.md,
-                  fontWeight: Fonts.semibold,
-                  color: c.text,
-                ),
-              ),
-              const SizedBox(height: Space.s1),
-              Text(
-                body,
-                style: TextStyle(
-                  fontSize: Sizes.base,
-                  height: 1.45,
-                  color: c.textMuted,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 2.1: what it takes, and how the feeder finds this phone.
+/// 2.1: what it takes.
 class _Before extends StatelessWidget {
   const _Before({required this.flow});
 
@@ -271,29 +216,9 @@ class _Before extends StatelessWidget {
           'About 10 minutes with Wellfed open: this phone serves the firmware',
         ),
         const SizedBox(height: Space.s4),
-        const SectionLabel('How should the feeder find this phone?'),
-        const SizedBox(height: Space.s3),
-        _RouteChoice(
-          selected: flow.route == InstallRoute.reset,
-          onTap: () => flow.chooseRoute(InstallRoute.reset),
-          title: "Through the feeder's own Wi-Fi",
-          body:
-              'The easy way. You hold Reset and this phone joins it for a '
-              'moment.',
-        ),
-        const SizedBox(height: Space.s3),
-        _RouteChoice(
-          selected: flow.route == InstallRoute.dns,
-          onTap: () => flow.chooseRoute(InstallRoute.dns),
-          title: 'Through your router',
-          body:
-              "For a feeder already set up in the vendor's app. You add one "
-              'DNS record on your router.',
-        ),
-        const SizedBox(height: Space.s4),
         const Notice(
           tone: Tone.warning,
-          lead: 'Its meals don't come across.',
+          lead: "Its meals don't come across.",
           text:
               "Write down any set in the vendor's app, and set them up again "
               'in Wellfed afterwards.',
@@ -352,149 +277,6 @@ class _BluetoothRefused extends StatelessWidget {
         'The install claims the feeder over Bluetooth. Allow "Nearby devices" '
         'for Wellfed in Android settings, then try again.',
   );
-}
-
-/// 2.3b: the DNS record, its check, and the wait for the feeder.
-class _Record extends StatefulWidget {
-  const _Record({required this.flow, required this.onLeave});
-
-  final InstallFlow flow;
-  final Future<void> Function() onLeave;
-
-  @override
-  State<_Record> createState() => _RecordState();
-}
-
-class _RecordState extends State<_Record> {
-  late final _name = TextEditingController(text: widget.flow.brokerName);
-
-  @override
-  void dispose() {
-    _name.dispose();
-    super.dispose();
-  }
-
-  /// What the lookup found. Advice only: it is this phone's resolver.
-  Widget? _result() => switch (widget.flow.dns) {
-    null || DnsResult_Points() => null,
-    DnsResult_Mixed(:final others) => Notice(
-      tone: Tone.warning,
-      lead: "This phone isn't the only answer.",
-      text:
-          'It also answers ${others.join(', ')}, and the feeder may take any '
-          'of them. Make this phone the only one.',
-    ),
-    DnsResult_Elsewhere(:final others) => Notice(
-      tone: Tone.warning,
-      lead: "The record doesn't point here yet.",
-      text: 'This phone hears ${others.join(', ')} for that name.',
-    ),
-    DnsResult_Unresolved() => const Notice(
-      tone: Tone.warning,
-      lead: 'Nothing answers that name yet.',
-      text: 'Check the spelling, and that the router saved the record.',
-    ),
-    DnsResult_BadName() => const Notice(
-      tone: Tone.fault,
-      lead: "That can't be its name.",
-      text: 'It looks like a host name, with dots, not an address.',
-    ),
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final flow = widget.flow;
-    final c = context.colors;
-    final ip = flow.phoneIp;
-    final result = _result();
-    final advice = result != null && flow.dns is! DnsResult_BadName;
-    final waiting = flow.running;
-    return StepScaffold(
-      stepLabel: 'Steps 1–2 of 5',
-      progress: 0.2,
-      leading: waiting ? Leading.close : Leading.back,
-      onLeading: waiting
-          ? () => unawaited(widget.onLeave())
-          : () => flow.back(InstallStage.before),
-      title: 'Point the feeder at this phone',
-      body:
-          "In your router's settings, add a local DNS record (sometimes "
-          'called a host override):',
-      content: [
-        LabeledField(
-          label: 'Name',
-          hint:
-              "The vendor's broker name, which Wellfed doesn't ship. A "
-              'router that logs DNS shows it when the feeder starts.',
-          child: TextField(
-            controller: _name,
-            enabled: !waiting,
-            keyboardType: TextInputType.url,
-            autocorrect: false,
-            decoration: const InputDecoration(
-              hintText: "The vendor's broker name",
-            ),
-            onChanged: (_) => setState(() {}),
-          ),
-        ),
-        const SizedBox(height: Space.s3),
-        if (ip == null)
-          const Notice(
-            tone: Tone.fault,
-            lead: "This phone isn't on Wi-Fi.",
-            text: 'Join your home network, then come back.',
-          )
-        else
-          FactList([
-            (
-              'Points to (this phone)',
-              Text(
-                ip,
-                style: TextStyle(
-                  fontFamily: Fonts.mono,
-                  fontSize: 15,
-                  color: c.text,
-                ),
-              ),
-            ),
-          ]),
-        if (result != null) ...[const SizedBox(height: Space.s3), result],
-        if (flow.dns is DnsResult_Points) ...[
-          const SizedBox(height: Space.s3),
-          const _Fact('The name points at this phone'),
-        ],
-        const SizedBox(height: Space.s3),
-        const Notice(
-          tone: Tone.neutral,
-          lead: 'Points only at this phone.',
-          text:
-              'Some feeders ask a public DNS server instead; if the install '
-              "never starts, that's why.",
-        ),
-        if (waiting) ...[
-          const SizedBox(height: Space.s4),
-          _RestartNow(flow: flow),
-        ],
-      ],
-      actions: [
-        if (!waiting && ip != null)
-          FilledButton(
-            onPressed: flow.checking || _name.text.trim().isEmpty
-                ? null
-                : () => unawaited(flow.checkRecord(_name.text)),
-            child: Text(
-              flow.dns == null ? 'Check the record' : 'Check it again',
-            ),
-          ),
-        // The lookup is this phone's; the feeder's own resolver may differ.
-        if (!waiting && advice)
-          OutlinedButton(
-            onPressed: flow.checking ? null : () => unawaited(flow.startRun()),
-            child: const Text('Go on anyway'),
-          ),
-      ],
-    );
-  }
 }
 
 /// 2.2: hold Reset. It erases the feeder's settings, so the owner says they
@@ -606,7 +388,10 @@ class _Handover extends StatelessWidget {
                 'after the reset. If it never does, hold Reset again.',
           ),
         ],
-        if (stateText != null) ...[
+        if (flow.restartAgain || flow.waitReason != null) ...[
+          const SizedBox(height: Space.s4),
+          _StillWaiting(flow: flow),
+        ] else if (stateText != null) ...[
           const SizedBox(height: Space.s4),
           Searching(stateText),
         ],
@@ -624,8 +409,9 @@ class _Handover extends StatelessWidget {
   }
 }
 
-class _RestartNow extends StatelessWidget {
-  const _RestartNow({required this.flow});
+/// Why stock has not moved on, and the restart its lost reports need.
+class _StillWaiting extends StatelessWidget {
+  const _StillWaiting({required this.flow});
 
   final InstallFlow flow;
 
@@ -640,16 +426,16 @@ class _RestartNow extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Notice(
-          tone: flow.restartAgain ? Tone.warning : Tone.neutral,
-          lead: flow.restartAgain
-              ? 'Restart the feeder once more:'
-              : 'Then restart the feeder:',
-          text:
-              'unplug it for 10 seconds (take the batteries out too, if '
-              'fitted) and plug it back in.',
-        ),
-        const SizedBox(height: Space.s4),
+        if (flow.restartAgain) ...[
+          const Notice(
+            tone: Tone.warning,
+            lead: 'Restart the feeder once more:',
+            text:
+                'unplug it for 10 seconds (take the batteries out too, if '
+                'fitted) and plug it back in.',
+          ),
+          const SizedBox(height: Space.s4),
+        ],
         Searching(text),
       ],
     );
@@ -1009,7 +795,7 @@ class _Finishing extends StatelessWidget {
   }
 }
 
-/// 2.8: done. Names the feeder, and says to take the DNS record down.
+/// 2.8: done. Names the feeder.
 class _Done extends StatefulWidget {
   const _Done({required this.flow});
 
@@ -1083,13 +869,6 @@ class _DoneState extends State<_Done> {
               ),
             ),
             const SizedBox(height: Space.s4),
-            const Notice(
-              tone: Tone.warning,
-              lead: 'Remove the DNS record now.',
-              text:
-                  "Until you do, the vendor's other devices on your network "
-                  "can't reach its cloud.",
-            ),
             const SizedBox(height: Space.s5),
             FilledButton(
               onPressed: () => unawaited(_go()),
@@ -1197,11 +976,7 @@ class _Stopped extends StatelessWidget {
     ),
     StopCase_NoFeederCame() => (
       'No feeder connected',
-      flow.route == InstallRoute.reset
-          ? 'Nothing was sent. Check that it is plugged in, then start again.'
-          : 'Nothing was sent. The feeder may ask a public DNS server instead '
-                'of your router. Check the record, restart the feeder and '
-                'start again.',
+      'Nothing was sent. Check that it is plugged in, then start again.',
     ),
     StopCase_HandoverFailed() => (
       "This phone couldn't finish the handover",
@@ -1253,8 +1028,8 @@ class _Stopped extends StatelessWidget {
     ),
     StopCase_ClockUnset() => (
       "The feeder's clock isn't set",
-      'It refused before downloading. This phone can set it, but the feeder '
-          'may then run meals that came due while its clock jumps.',
+      'It refused before downloading, and nothing was sent. Restart the '
+          'feeder and start again.',
     ),
     StopCase_NoSetupFeeder() => (
       'No feeder is waiting over Bluetooth',
@@ -1264,8 +1039,8 @@ class _Stopped extends StatelessWidget {
       "This phone couldn't claim it",
       switch (refusal) {
         SetupRefusal.wrongCode =>
-          'The feeder heard a different order of presses. Try again with a new '
-              'code.',
+          'The feeder heard a different order of presses, or another device '
+              'is in the way. Try again with a new code.',
         SetupRefusal.unconfirmed =>
           'The code works for 60 seconds, and the time ran out. Try again with '
               'a new code.',
@@ -1277,8 +1052,8 @@ class _Stopped extends StatelessWidget {
           "It can't save right now. Try again in a minute.",
         SetupRefusal.invalid => 'It rejected the phone name or the Wi-Fi. Check them and start again.',
         null =>
-          'The Bluetooth link dropped. Move closer and try again. It runs '
-              'Wellfed and still holds its original firmware.',
+          'The Bluetooth exchange broke off. Move closer and try again. It '
+              'runs Wellfed and still holds its original firmware.',
       },
     ),
     StopCase_OtherFeeder() => (
@@ -1445,10 +1220,7 @@ class _Stopped extends StatelessWidget {
         primary('Listen for it', () => unawaited(flow.listenForOpenRequest())),
       ],
       StopCase_ClockUnset() => [
-        primary(
-          'Set its clock and start again',
-          () => unawaited(flow.again(calibrate: true)),
-        ),
+        primary('Start again', () => unawaited(flow.again())),
       ],
       StopCase_TwoFeeders() || StopCase_NotYourFeeder() => [
         primary('Start again', () => unawaited(flow.again(forget: true))),

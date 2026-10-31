@@ -35,7 +35,6 @@ use tracing::info;
 use crate::{
     api::{self, ApiState},
     build_info::BUILD,
-    clock,
     config::{self, Config, State},
     controller::{self, Controller, Rejection, Status},
     enroll::Enrollment,
@@ -69,7 +68,6 @@ pub struct Options {
     /// With an installer's config and no feeder enrolled yet: how long the
     /// broker trusts the first stock feeder that connects.
     pub enroll: Option<Duration>,
-    pub clock: clock::Policy,
     pub api: Api,
     pub bind: Bind,
 }
@@ -403,7 +401,7 @@ async fn serve(
     };
     ready.send_replace(Some(handle.clone()));
 
-    let worker = mqtt::run(config.clone(), controller, receiver, status, options.clock);
+    let worker = mqtt::run(config.clone(), controller, receiver, status);
     // The broker admits an enrolling feeder once the session subscribed.
     let mut connected = status_rx;
     let subscribed = async move {

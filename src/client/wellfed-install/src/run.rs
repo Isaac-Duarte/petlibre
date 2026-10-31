@@ -353,28 +353,6 @@ async fn recognized(
     }
 }
 
-/// Guide the owner through the DNS override, then look the name up from
-/// here and show what it found, before the feeder restarts. The lookup is
-/// advice only: this computer may ask another resolver than the feeder
-/// does, so the run waits for stock at the broker whatever it shows.
-async fn point_dns(
-    prompter: &mut impl Prompter,
-    name: String,
-    broker: IpAddr,
-) -> Result<Vec<IpAddr>, Error> {
-    let port = wellfed_client::install::STOCK_BROKER_PORT;
-    let lookup = format!("{name}:{port}");
-    prompter
-        .done(Prompt::SetOverride { name, broker })
-        .await
-        .map_err(Error::Platform)?;
-
-    Ok(tokio::net::lookup_host(lookup)
-        .await
-        .map(|addresses| addresses.map(|address| address.ip()).collect())
-        .unwrap_or_default())
-}
-
 /// Ask the owner to restart the feeder, with the broker already listening.
 async fn restart_feeder(prompter: &mut impl Prompter, report: &impl Report) -> Result<(), Error> {
     prompter
@@ -499,20 +477,6 @@ where
             let step = install.step();
             self.track.enter(install.phase());
             match step {
-                Step::PointDns(dns) => {
-                    let (name, broker) = (dns.name().to_string(), dns.broker());
-                    let resolved = point_dns(&mut self.io.prompter, name.clone(), broker).await?;
-                    self.io.report.event(Event::DnsChecked {
-                        name,
-                        broker,
-                        check: dns.check(&resolved),
-                    });
-                    // The enrollment window opens only now, just before
-                    // stock restarts into it.
-                    self.serve()?;
-                    restart_feeder(&mut self.io.prompter, &self.io.report).await?;
-                    install.dns_pointed();
-                }
                 Step::SendFrame(frame) => {
                     self.serve()?;
                     self.send_frame(frame.bytes()).await?;

@@ -293,9 +293,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Counts dco_decode_box_autoadd_counts(dynamic raw);
 
   @protected
-  DnsResult dco_decode_box_autoadd_dns_result(dynamic raw);
-
-  @protected
   Erases dco_decode_box_autoadd_erases(dynamic raw);
 
   @protected
@@ -483,9 +480,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Desiccant dco_decode_desiccant(dynamic raw);
-
-  @protected
-  DnsResult dco_decode_dns_result(dynamic raw);
 
   @protected
   Enrolled dco_decode_enrolled(dynamic raw);
@@ -1147,9 +1141,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Counts sse_decode_box_autoadd_counts(SseDeserializer deserializer);
 
   @protected
-  DnsResult sse_decode_box_autoadd_dns_result(SseDeserializer deserializer);
-
-  @protected
   Erases sse_decode_box_autoadd_erases(SseDeserializer deserializer);
 
   @protected
@@ -1363,9 +1354,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Desiccant sse_decode_desiccant(SseDeserializer deserializer);
-
-  @protected
-  DnsResult sse_decode_dns_result(SseDeserializer deserializer);
 
   @protected
   Enrolled sse_decode_enrolled(SseDeserializer deserializer);
@@ -2105,12 +2093,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_counts(Counts self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_dns_result(
-    DnsResult self,
-    SseSerializer serializer,
-  );
-
-  @protected
   void sse_encode_box_autoadd_erases(Erases self, SseSerializer serializer);
 
   @protected
@@ -2409,9 +2391,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_desiccant(Desiccant self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_dns_result(DnsResult self, SseSerializer serializer);
 
   @protected
   void sse_encode_enrolled(Enrolled self, SseSerializer serializer);

@@ -7,22 +7,15 @@
 //! record it could not remove) carries its text, rendered with its causes:
 //! the run has already decided what it means.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use wellfed_client::install::{DnsCheck, StockNotReady};
+use wellfed_client::install::StockNotReady;
 use wellfed_client::update_key::Enrolled;
 
 /// One step of progress.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    /// The resolver this computer asks answered stock's broker `name`
-    /// with `check`, where `broker` is this installer.
-    DnsChecked {
-        name: String,
-        broker: IpAddr,
-        check: DnsCheck,
-    },
     /// The feeder restarts; the run waits for stock at the broker.
     AwaitingStock,
     /// Stock's server runs, its broker trusting the first feeder.

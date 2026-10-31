@@ -239,7 +239,6 @@ void main() {
       find.textContaining('Hold Reset for about 5 seconds'),
       findsOneWidget,
     );
-    expect(find.textContaining('once the DNS record is gone'), findsOneWidget);
     expect(ports.released, 1);
   });
 

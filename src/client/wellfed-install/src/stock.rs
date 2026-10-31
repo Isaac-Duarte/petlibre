@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use wellfed_client::install::{FeederTrust, StockPower, StockView};
 use wellfed_formats::stock::{Enrollment, ImageLease, OtaReport, StockStatus};
-use wellfed_stock::clock;
 use wellfed_stock::ota::image::{self, Images};
 use wellfed_stock::ota::trial::{AnsweredInput, Input, Record};
 use wellfed_stock::server::{self, Api, Handle, NoFeederEnrolled, OtaTrial, Refusal, Server};
@@ -30,9 +29,6 @@ pub struct StockOptions {
     pub config: PathBuf,
     /// How long the broker trusts the first stock feeder that connects.
     pub enroll: Duration,
-    /// Whether stock's clock is set even when its own reading is unknown
-    /// or far off ([`clock::Policy`]).
-    pub clock: clock::Policy,
     /// Whether the server also answers its loopback API, for the bench's
     /// page to read.
     pub api: Api,
@@ -166,7 +162,6 @@ impl Stock {
             server::Options {
                 trial: OtaTrial::Enabled,
                 enroll: Some(self.options.enroll),
-                clock: self.options.clock,
                 api: self.options.api,
                 bind: self.options.bind,
             },
@@ -398,7 +393,6 @@ mod tests {
                 server::Options {
                     trial: OtaTrial::Disabled,
                     enroll: None,
-                    clock: clock::Policy::Bounded,
                     api: Api::Off,
                     bind: server::Bind::Configured,
                 },

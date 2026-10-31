@@ -1093,8 +1093,6 @@ read a
         "m",
         "--stock-config",
         "c",
-        "--broker-name",
-        "b.example",
     ];
     let id = server.submit(&words).await.unwrap();
     let paused = Session::Paused {

@@ -20,9 +20,7 @@ use tracing::info;
 use wellfed_client::install::{SETUP_ADDRESS, SetupFrame};
 use wellfed_formats::bench::lease::Lease;
 use wellfed_stock::{
-    broker_name,
     build_info::BUILD,
-    clock,
     config::{self, State},
     mqtt::{broker, broker::DeviceAuth},
     neighbour, network, ota,
@@ -86,14 +84,6 @@ enum Action {
         /// first stock feeder that connects within this many minutes.
         #[arg(long)]
         enroll_minutes: Option<u64>,
-        /// Set stock's clock in every `NTP` reply, even when its own reading
-        /// is unknown or more than 10 minutes off, and even with a captured
-        /// nonempty plan table (a seeding config), whose plans are then live.
-        /// Stock may then run meals that came due in the jump, from its own
-        /// plans or the captured ones; without it, a stock clock left unset
-        /// may refuse an install (error 1214).
-        #[arg(long)]
-        calibrate_clock: bool,
     },
 
     /// Run just the authenticated Rust MQTT broker (normally managed by serve).
@@ -185,12 +175,6 @@ enum Action {
         to: std::net::SocketAddr,
     },
 
-    /// Print the broker name stock's settings store, from a file (the
-    /// settings sector at 0x3e8000, or a whole flash read): the name the
-    /// DNS-first install overrides (`wellfed install --broker-name`).
-    /// Touches no feeder.
-    BrokerName { file: PathBuf },
-
     /// Explicit feeder-only gateway routing and WAN isolation; needs sudo.
     Network {
         #[command(subcommand)]
@@ -204,7 +188,7 @@ enum NetworkAction {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
         /// `off` keeps the WAN block and the input accepts but redirects
-        /// nothing: stock reaches the broker only by DNS.
+        /// nothing: stock reaches the broker only where a setup frame named it.
         #[arg(long, value_enum, default_value_t = network::Redirect::Broker)]
         redirect: network::Redirect,
     },
@@ -292,19 +276,13 @@ async fn main() -> Result<()> {
             config,
             enable_ota_trial,
             enroll_minutes,
-            calibrate_clock,
         } => {
             let trial = if enable_ota_trial {
                 OtaTrial::Enabled
             } else {
                 OtaTrial::Disabled
             };
-            let clock = if calibrate_clock {
-                clock::Policy::Always
-            } else {
-                clock::Policy::Bounded
-            };
-            serve(config, trial, enroll_minutes, clock).await?
+            serve(config, trial, enroll_minutes).await?
         }
         Action::Status { config } => {
             api_request(config, Method::GET, "/api/status", None::<&()>).await?
@@ -438,20 +416,6 @@ async fn main() -> Result<()> {
             .await?;
         }
 
-        Action::BrokerName { file } => {
-            let bytes =
-                std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
-            let broker = broker_name::read(&bytes)?;
-            if broker.port != u32::from(wellfed_client::install::STOCK_BROKER_PORT) {
-                eprintln!(
-                    "Stock connects on port {}, not {}: a DNS override alone cannot move it",
-                    broker.port,
-                    wellfed_client::install::STOCK_BROKER_PORT
-                );
-            }
-            println!("{}", broker.host);
-        }
-
         Action::Network { action } => match action {
             NetworkAction::Apply { config, redirect } => {
                 network::apply(&config::load(&config)?, redirect)?;
@@ -460,7 +424,7 @@ async fn main() -> Result<()> {
                         "Test-feeder MQTT redirected locally; its forwarded WAN traffic is blocked."
                     ),
                     network::Redirect::Off => println!(
-                        "Test-feeder MQTT not redirected (it reaches the broker only by DNS); its forwarded WAN traffic is blocked."
+                        "Test-feeder MQTT not redirected (it reaches the broker only where a setup frame named it); its forwarded WAN traffic is blocked."
                     ),
                 }
             }
@@ -513,12 +477,7 @@ fn bench_lease(config: &std::path::Path) -> Result<Lease> {
 /// connection deadline, and a little more.
 const DRAIN: Duration = Duration::from_secs(310);
 
-async fn serve(
-    path: PathBuf,
-    trial: OtaTrial,
-    enroll_minutes: Option<u64>,
-    clock: clock::Policy,
-) -> Result<()> {
+async fn serve(path: PathBuf, trial: OtaTrial, enroll_minutes: Option<u64>) -> Result<()> {
     // Trial dispatch must run a binary whose source can be reviewed: a clean
     // commit of every build input. Status and /health report the commit.
     // Checked here before the lease, and again where the server starts.
@@ -541,7 +500,6 @@ async fn serve(
         server::Options {
             trial,
             enroll: enroll_minutes.map(|minutes| Duration::from_secs(minutes * 60)),
-            clock,
             api: server::Api::Loopback,
             bind: server::Bind::Configured,
         },
@@ -624,17 +582,6 @@ mod tests {
             Cli::try_parse_from(trial).unwrap().command,
             Action::Serve {
                 enable_ota_trial: true,
-                calibrate_clock: false,
-                ..
-            }
-        ));
-
-        // `wellfed install --calibrate-clock` passes the flag through.
-        let install = [&serve[..], &["--enable-ota-trial", "--calibrate-clock"]].concat();
-        assert!(matches!(
-            Cli::try_parse_from(install).unwrap().command,
-            Action::Serve {
-                calibrate_clock: true,
                 ..
             }
         ));

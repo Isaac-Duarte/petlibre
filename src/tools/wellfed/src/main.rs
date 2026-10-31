@@ -364,21 +364,12 @@ mod tests {
         // The stock config is always named: the bench's captured one is no
         // default.
         assert!(Cli::try_parse_from(&install[..6]).is_err());
-        // DNS first, or the frame, or a resumed run: one at a time.
-        let dns = [&install[..8], &["--broker-name", "broker.example.net"]].concat();
-        assert!(matches!(
-            Cli::try_parse_from(&dns).map(|cli| cli.command),
-            Ok(Command::Install(_))
-        ));
-        for other in [&["--ssid", "Home"][..], &["--from-bank0"][..]] {
-            assert!(Cli::try_parse_from([&dns[..], other].concat()).is_err());
-        }
         // Prompts go to a terminal or, for the bench server, as lines.
         for prompts in ["terminal", "lines"] {
-            let asked = [&dns[..], &["--prompts", prompts]].concat();
+            let asked = [&install[..8], &["--prompts", prompts]].concat();
             assert!(Cli::try_parse_from(asked).is_ok(), "{prompts}");
         }
-        assert!(Cli::try_parse_from([&dns[..], &["--prompts", "json"]].concat()).is_err());
+        assert!(Cli::try_parse_from([&install[..8], &["--prompts", "json"]].concat()).is_err());
         // The frame's broker means nothing without the frame.
         let broker = [&install[..8], &["--broker", "10.42.103.1:1883"]].concat();
         assert!(Cli::try_parse_from(broker).is_err());
@@ -391,8 +382,6 @@ mod tests {
             "private/review",
             "--stock-config",
             "private/installer.json",
-            "--broker-name",
-            "broker.example.net",
             "--update-key",
             "private/update-key.json",
             "--home-ssid",

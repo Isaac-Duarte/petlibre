@@ -21,7 +21,7 @@ pub enum Error {
     Platform(PlatformError),
     /// Joining stock's setup network, or coming back from it, failed. Nothing
     /// is asked of stock until it reaches the broker, so a new run may go again.
-    #[error("the handover over the feeder's setup network: {0}")]
+    #[error("the handover over the feeder's setup network")]
     Handover(#[source] PlatformError),
     #[error("show the setup code")]
     ShowCode(#[source] PlatformError),

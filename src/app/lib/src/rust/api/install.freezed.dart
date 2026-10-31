@@ -273,428 +273,6 @@ as String,
 }
 
 /// @nodoc
-mixin _$DnsResult {
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is DnsResult);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'DnsResult()';
-}
-
-
-}
-
-/// @nodoc
-class $DnsResultCopyWith<$Res>  {
-$DnsResultCopyWith(DnsResult _, $Res Function(DnsResult) __);
-}
-
-
-/// Adds pattern-matching-related methods to [DnsResult].
-extension DnsResultPatterns on DnsResult {
-/// A variant of `map` that fallback to returning `orElse`.
-///
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case final Subclass value:
-///     return ...;
-///   case _:
-///     return orElse();
-/// }
-/// ```
-
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( DnsResult_Points value)?  points,TResult Function( DnsResult_Mixed value)?  mixed,TResult Function( DnsResult_Elsewhere value)?  elsewhere,TResult Function( DnsResult_Unresolved value)?  unresolved,TResult Function( DnsResult_BadName value)?  badName,required TResult orElse(),}){
-final _that = this;
-switch (_that) {
-case DnsResult_Points() when points != null:
-return points(_that);case DnsResult_Mixed() when mixed != null:
-return mixed(_that);case DnsResult_Elsewhere() when elsewhere != null:
-return elsewhere(_that);case DnsResult_Unresolved() when unresolved != null:
-return unresolved(_that);case DnsResult_BadName() when badName != null:
-return badName(_that);case _:
-  return orElse();
-
-}
-}
-/// A `switch`-like method, using callbacks.
-///
-/// Callbacks receives the raw object, upcasted.
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case final Subclass value:
-///     return ...;
-///   case final Subclass2 value:
-///     return ...;
-/// }
-/// ```
-
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( DnsResult_Points value)  points,required TResult Function( DnsResult_Mixed value)  mixed,required TResult Function( DnsResult_Elsewhere value)  elsewhere,required TResult Function( DnsResult_Unresolved value)  unresolved,required TResult Function( DnsResult_BadName value)  badName,}){
-final _that = this;
-switch (_that) {
-case DnsResult_Points():
-return points(_that);case DnsResult_Mixed():
-return mixed(_that);case DnsResult_Elsewhere():
-return elsewhere(_that);case DnsResult_Unresolved():
-return unresolved(_that);case DnsResult_BadName():
-return badName(_that);}
-}
-/// A variant of `map` that fallback to returning `null`.
-///
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case final Subclass value:
-///     return ...;
-///   case _:
-///     return null;
-/// }
-/// ```
-
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( DnsResult_Points value)?  points,TResult? Function( DnsResult_Mixed value)?  mixed,TResult? Function( DnsResult_Elsewhere value)?  elsewhere,TResult? Function( DnsResult_Unresolved value)?  unresolved,TResult? Function( DnsResult_BadName value)?  badName,}){
-final _that = this;
-switch (_that) {
-case DnsResult_Points() when points != null:
-return points(_that);case DnsResult_Mixed() when mixed != null:
-return mixed(_that);case DnsResult_Elsewhere() when elsewhere != null:
-return elsewhere(_that);case DnsResult_Unresolved() when unresolved != null:
-return unresolved(_that);case DnsResult_BadName() when badName != null:
-return badName(_that);case _:
-  return null;
-
-}
-}
-/// A variant of `when` that fallback to an `orElse` callback.
-///
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case Subclass(:final field):
-///     return ...;
-///   case _:
-///     return orElse();
-/// }
-/// ```
-
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  points,TResult Function( List<String> others)?  mixed,TResult Function( List<String> others)?  elsewhere,TResult Function()?  unresolved,TResult Function()?  badName,required TResult orElse(),}) {final _that = this;
-switch (_that) {
-case DnsResult_Points() when points != null:
-return points();case DnsResult_Mixed() when mixed != null:
-return mixed(_that.others);case DnsResult_Elsewhere() when elsewhere != null:
-return elsewhere(_that.others);case DnsResult_Unresolved() when unresolved != null:
-return unresolved();case DnsResult_BadName() when badName != null:
-return badName();case _:
-  return orElse();
-
-}
-}
-/// A `switch`-like method, using callbacks.
-///
-/// As opposed to `map`, this offers destructuring.
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case Subclass(:final field):
-///     return ...;
-///   case Subclass2(:final field2):
-///     return ...;
-/// }
-/// ```
-
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  points,required TResult Function( List<String> others)  mixed,required TResult Function( List<String> others)  elsewhere,required TResult Function()  unresolved,required TResult Function()  badName,}) {final _that = this;
-switch (_that) {
-case DnsResult_Points():
-return points();case DnsResult_Mixed():
-return mixed(_that.others);case DnsResult_Elsewhere():
-return elsewhere(_that.others);case DnsResult_Unresolved():
-return unresolved();case DnsResult_BadName():
-return badName();}
-}
-/// A variant of `when` that fallback to returning `null`
-///
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case Subclass(:final field):
-///     return ...;
-///   case _:
-///     return null;
-/// }
-/// ```
-
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  points,TResult? Function( List<String> others)?  mixed,TResult? Function( List<String> others)?  elsewhere,TResult? Function()?  unresolved,TResult? Function()?  badName,}) {final _that = this;
-switch (_that) {
-case DnsResult_Points() when points != null:
-return points();case DnsResult_Mixed() when mixed != null:
-return mixed(_that.others);case DnsResult_Elsewhere() when elsewhere != null:
-return elsewhere(_that.others);case DnsResult_Unresolved() when unresolved != null:
-return unresolved();case DnsResult_BadName() when badName != null:
-return badName();case _:
-  return null;
-
-}
-}
-
-}
-
-/// @nodoc
-
-
-class DnsResult_Points extends DnsResult {
-  const DnsResult_Points(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is DnsResult_Points);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'DnsResult.points()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
-
-
-class DnsResult_Mixed extends DnsResult {
-  const DnsResult_Mixed({required  List<String> others}): _others = others,super._();
-  
-
- final  List<String> _others;
- List<String> get others {
-  if (_others is EqualUnmodifiableListView) return _others;
-  // ignore: implicit_dynamic_type
-  return EqualUnmodifiableListView(_others);
-}
-
-
-/// Create a copy of DnsResult
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$DnsResult_MixedCopyWith<DnsResult_Mixed> get copyWith => _$DnsResult_MixedCopyWithImpl<DnsResult_Mixed>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is DnsResult_Mixed&&const DeepCollectionEquality().equals(other.others, _others));
-}
-
-
-@override
-int get hashCode {
-    return Object.hash(runtimeType,const DeepCollectionEquality().hash(_others));
-}
-
-@override
-String toString() {
-    return 'DnsResult.mixed(others: $others)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $DnsResult_MixedCopyWith<$Res> implements $DnsResultCopyWith<$Res> {
-  factory $DnsResult_MixedCopyWith(DnsResult_Mixed value, $Res Function(DnsResult_Mixed) _then) = _$DnsResult_MixedCopyWithImpl;
-@useResult
-$Res call({
- List<String> others
-});
-
-
-
-
-}
-/// @nodoc
-class _$DnsResult_MixedCopyWithImpl<$Res>
-    implements $DnsResult_MixedCopyWith<$Res> {
-  _$DnsResult_MixedCopyWithImpl(this._self, this._then);
-
-  final DnsResult_Mixed _self;
-  final $Res Function(DnsResult_Mixed) _then;
-
-/// Create a copy of DnsResult
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? others = null,}) {
-  return _then(DnsResult_Mixed(
-others: null == others ? _self._others : others // ignore: cast_nullable_to_non_nullable
-as List<String>,
-  ));
-}
-
-
-}
-
-/// @nodoc
-
-
-class DnsResult_Elsewhere extends DnsResult {
-  const DnsResult_Elsewhere({required  List<String> others}): _others = others,super._();
-  
-
- final  List<String> _others;
- List<String> get others {
-  if (_others is EqualUnmodifiableListView) return _others;
-  // ignore: implicit_dynamic_type
-  return EqualUnmodifiableListView(_others);
-}
-
-
-/// Create a copy of DnsResult
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$DnsResult_ElsewhereCopyWith<DnsResult_Elsewhere> get copyWith => _$DnsResult_ElsewhereCopyWithImpl<DnsResult_Elsewhere>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is DnsResult_Elsewhere&&const DeepCollectionEquality().equals(other.others, _others));
-}
-
-
-@override
-int get hashCode {
-    return Object.hash(runtimeType,const DeepCollectionEquality().hash(_others));
-}
-
-@override
-String toString() {
-    return 'DnsResult.elsewhere(others: $others)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $DnsResult_ElsewhereCopyWith<$Res> implements $DnsResultCopyWith<$Res> {
-  factory $DnsResult_ElsewhereCopyWith(DnsResult_Elsewhere value, $Res Function(DnsResult_Elsewhere) _then) = _$DnsResult_ElsewhereCopyWithImpl;
-@useResult
-$Res call({
- List<String> others
-});
-
-
-
-
-}
-/// @nodoc
-class _$DnsResult_ElsewhereCopyWithImpl<$Res>
-    implements $DnsResult_ElsewhereCopyWith<$Res> {
-  _$DnsResult_ElsewhereCopyWithImpl(this._self, this._then);
-
-  final DnsResult_Elsewhere _self;
-  final $Res Function(DnsResult_Elsewhere) _then;
-
-/// Create a copy of DnsResult
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? others = null,}) {
-  return _then(DnsResult_Elsewhere(
-others: null == others ? _self._others : others // ignore: cast_nullable_to_non_nullable
-as List<String>,
-  ));
-}
-
-
-}
-
-/// @nodoc
-
-
-class DnsResult_Unresolved extends DnsResult {
-  const DnsResult_Unresolved(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is DnsResult_Unresolved);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'DnsResult.unresolved()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
-
-
-class DnsResult_BadName extends DnsResult {
-  const DnsResult_BadName(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is DnsResult_BadName);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'DnsResult.badName()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
 mixin _$ImageCheck {
 
 
@@ -1523,11 +1101,10 @@ extension InstallAskPatterns on InstallAsk {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( InstallAsk_SetOverride value)?  setOverride,TResult Function( InstallAsk_RestartFeeder value)?  restartFeeder,TResult Function( InstallAsk_JoinFeederNetwork value)?  joinFeederNetwork,TResult Function( InstallAsk_LeaveFeederNetwork value)?  leaveFeederNetwork,TResult Function( InstallAsk_RecognizeFeeder value)?  recognizeFeeder,TResult Function( InstallAsk_OpenRecoveryWindow value)?  openRecoveryWindow,TResult Function( InstallAsk_OpenLink value)?  openLink,TResult Function( InstallAsk_WriteLink value)?  writeLink,TResult Function( InstallAsk_CloseLink value)?  closeLink,TResult Function( InstallAsk_Locate value)?  locate,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( InstallAsk_RestartFeeder value)?  restartFeeder,TResult Function( InstallAsk_JoinFeederNetwork value)?  joinFeederNetwork,TResult Function( InstallAsk_LeaveFeederNetwork value)?  leaveFeederNetwork,TResult Function( InstallAsk_RecognizeFeeder value)?  recognizeFeeder,TResult Function( InstallAsk_OpenRecoveryWindow value)?  openRecoveryWindow,TResult Function( InstallAsk_OpenLink value)?  openLink,TResult Function( InstallAsk_WriteLink value)?  writeLink,TResult Function( InstallAsk_CloseLink value)?  closeLink,TResult Function( InstallAsk_Locate value)?  locate,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
-case InstallAsk_SetOverride() when setOverride != null:
-return setOverride(_that);case InstallAsk_RestartFeeder() when restartFeeder != null:
+case InstallAsk_RestartFeeder() when restartFeeder != null:
 return restartFeeder(_that);case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
 return joinFeederNetwork(_that);case InstallAsk_LeaveFeederNetwork() when leaveFeederNetwork != null:
 return leaveFeederNetwork(_that);case InstallAsk_RecognizeFeeder() when recognizeFeeder != null:
@@ -1554,11 +1131,10 @@ return locate(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( InstallAsk_SetOverride value)  setOverride,required TResult Function( InstallAsk_RestartFeeder value)  restartFeeder,required TResult Function( InstallAsk_JoinFeederNetwork value)  joinFeederNetwork,required TResult Function( InstallAsk_LeaveFeederNetwork value)  leaveFeederNetwork,required TResult Function( InstallAsk_RecognizeFeeder value)  recognizeFeeder,required TResult Function( InstallAsk_OpenRecoveryWindow value)  openRecoveryWindow,required TResult Function( InstallAsk_OpenLink value)  openLink,required TResult Function( InstallAsk_WriteLink value)  writeLink,required TResult Function( InstallAsk_CloseLink value)  closeLink,required TResult Function( InstallAsk_Locate value)  locate,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( InstallAsk_RestartFeeder value)  restartFeeder,required TResult Function( InstallAsk_JoinFeederNetwork value)  joinFeederNetwork,required TResult Function( InstallAsk_LeaveFeederNetwork value)  leaveFeederNetwork,required TResult Function( InstallAsk_RecognizeFeeder value)  recognizeFeeder,required TResult Function( InstallAsk_OpenRecoveryWindow value)  openRecoveryWindow,required TResult Function( InstallAsk_OpenLink value)  openLink,required TResult Function( InstallAsk_WriteLink value)  writeLink,required TResult Function( InstallAsk_CloseLink value)  closeLink,required TResult Function( InstallAsk_Locate value)  locate,}){
 final _that = this;
 switch (_that) {
-case InstallAsk_SetOverride():
-return setOverride(_that);case InstallAsk_RestartFeeder():
+case InstallAsk_RestartFeeder():
 return restartFeeder(_that);case InstallAsk_JoinFeederNetwork():
 return joinFeederNetwork(_that);case InstallAsk_LeaveFeederNetwork():
 return leaveFeederNetwork(_that);case InstallAsk_RecognizeFeeder():
@@ -1581,11 +1157,10 @@ return locate(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( InstallAsk_SetOverride value)?  setOverride,TResult? Function( InstallAsk_RestartFeeder value)?  restartFeeder,TResult? Function( InstallAsk_JoinFeederNetwork value)?  joinFeederNetwork,TResult? Function( InstallAsk_LeaveFeederNetwork value)?  leaveFeederNetwork,TResult? Function( InstallAsk_RecognizeFeeder value)?  recognizeFeeder,TResult? Function( InstallAsk_OpenRecoveryWindow value)?  openRecoveryWindow,TResult? Function( InstallAsk_OpenLink value)?  openLink,TResult? Function( InstallAsk_WriteLink value)?  writeLink,TResult? Function( InstallAsk_CloseLink value)?  closeLink,TResult? Function( InstallAsk_Locate value)?  locate,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( InstallAsk_RestartFeeder value)?  restartFeeder,TResult? Function( InstallAsk_JoinFeederNetwork value)?  joinFeederNetwork,TResult? Function( InstallAsk_LeaveFeederNetwork value)?  leaveFeederNetwork,TResult? Function( InstallAsk_RecognizeFeeder value)?  recognizeFeeder,TResult? Function( InstallAsk_OpenRecoveryWindow value)?  openRecoveryWindow,TResult? Function( InstallAsk_OpenLink value)?  openLink,TResult? Function( InstallAsk_WriteLink value)?  writeLink,TResult? Function( InstallAsk_CloseLink value)?  closeLink,TResult? Function( InstallAsk_Locate value)?  locate,}){
 final _that = this;
 switch (_that) {
-case InstallAsk_SetOverride() when setOverride != null:
-return setOverride(_that);case InstallAsk_RestartFeeder() when restartFeeder != null:
+case InstallAsk_RestartFeeder() when restartFeeder != null:
 return restartFeeder(_that);case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
 return joinFeederNetwork(_that);case InstallAsk_LeaveFeederNetwork() when leaveFeederNetwork != null:
 return leaveFeederNetwork(_that);case InstallAsk_RecognizeFeeder() when recognizeFeeder != null:
@@ -1611,10 +1186,9 @@ return locate(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String name,  String broker)?  setOverride,TResult Function()?  restartFeeder,TResult Function()?  joinFeederNetwork,TResult Function()?  leaveFeederNetwork,TResult Function( String device,  String address)?  recognizeFeeder,TResult Function()?  openRecoveryWindow,TResult Function()?  openLink,TResult Function( List<Uint8List> pieces)?  writeLink,TResult Function()?  closeLink,TResult Function( String identity)?  locate,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  restartFeeder,TResult Function()?  joinFeederNetwork,TResult Function()?  leaveFeederNetwork,TResult Function( String device,  String address)?  recognizeFeeder,TResult Function()?  openRecoveryWindow,TResult Function()?  openLink,TResult Function( List<Uint8List> pieces)?  writeLink,TResult Function()?  closeLink,TResult Function( String identity)?  locate,required TResult orElse(),}) {final _that = this;
 switch (_that) {
-case InstallAsk_SetOverride() when setOverride != null:
-return setOverride(_that.name,_that.broker);case InstallAsk_RestartFeeder() when restartFeeder != null:
+case InstallAsk_RestartFeeder() when restartFeeder != null:
 return restartFeeder();case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
 return joinFeederNetwork();case InstallAsk_LeaveFeederNetwork() when leaveFeederNetwork != null:
 return leaveFeederNetwork();case InstallAsk_RecognizeFeeder() when recognizeFeeder != null:
@@ -1641,10 +1215,9 @@ return locate(_that.identity);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String name,  String broker)  setOverride,required TResult Function()  restartFeeder,required TResult Function()  joinFeederNetwork,required TResult Function()  leaveFeederNetwork,required TResult Function( String device,  String address)  recognizeFeeder,required TResult Function()  openRecoveryWindow,required TResult Function()  openLink,required TResult Function( List<Uint8List> pieces)  writeLink,required TResult Function()  closeLink,required TResult Function( String identity)  locate,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  restartFeeder,required TResult Function()  joinFeederNetwork,required TResult Function()  leaveFeederNetwork,required TResult Function( String device,  String address)  recognizeFeeder,required TResult Function()  openRecoveryWindow,required TResult Function()  openLink,required TResult Function( List<Uint8List> pieces)  writeLink,required TResult Function()  closeLink,required TResult Function( String identity)  locate,}) {final _that = this;
 switch (_that) {
-case InstallAsk_SetOverride():
-return setOverride(_that.name,_that.broker);case InstallAsk_RestartFeeder():
+case InstallAsk_RestartFeeder():
 return restartFeeder();case InstallAsk_JoinFeederNetwork():
 return joinFeederNetwork();case InstallAsk_LeaveFeederNetwork():
 return leaveFeederNetwork();case InstallAsk_RecognizeFeeder():
@@ -1667,10 +1240,9 @@ return locate(_that.identity);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String name,  String broker)?  setOverride,TResult? Function()?  restartFeeder,TResult? Function()?  joinFeederNetwork,TResult? Function()?  leaveFeederNetwork,TResult? Function( String device,  String address)?  recognizeFeeder,TResult? Function()?  openRecoveryWindow,TResult? Function()?  openLink,TResult? Function( List<Uint8List> pieces)?  writeLink,TResult? Function()?  closeLink,TResult? Function( String identity)?  locate,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  restartFeeder,TResult? Function()?  joinFeederNetwork,TResult? Function()?  leaveFeederNetwork,TResult? Function( String device,  String address)?  recognizeFeeder,TResult? Function()?  openRecoveryWindow,TResult? Function()?  openLink,TResult? Function( List<Uint8List> pieces)?  writeLink,TResult? Function()?  closeLink,TResult? Function( String identity)?  locate,}) {final _that = this;
 switch (_that) {
-case InstallAsk_SetOverride() when setOverride != null:
-return setOverride(_that.name,_that.broker);case InstallAsk_RestartFeeder() when restartFeeder != null:
+case InstallAsk_RestartFeeder() when restartFeeder != null:
 return restartFeeder();case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
 return joinFeederNetwork();case InstallAsk_LeaveFeederNetwork() when leaveFeederNetwork != null:
 return leaveFeederNetwork();case InstallAsk_RecognizeFeeder() when recognizeFeeder != null:
@@ -1684,76 +1256,6 @@ return locate(_that.identity);case _:
 
 }
 }
-
-}
-
-/// @nodoc
-
-
-class InstallAsk_SetOverride extends InstallAsk {
-  const InstallAsk_SetOverride({required this.name, required this.broker}): super._();
-  
-
- final  String name;
- final  String broker;
-
-/// Create a copy of InstallAsk
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$InstallAsk_SetOverrideCopyWith<InstallAsk_SetOverride> get copyWith => _$InstallAsk_SetOverrideCopyWithImpl<InstallAsk_SetOverride>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallAsk_SetOverride&&(identical(other.name, name) || other.name == name)&&(identical(other.broker, broker) || other.broker == broker));
-}
-
-
-@override
-int get hashCode {
-    return Object.hash(runtimeType,name,broker);
-}
-
-@override
-String toString() {
-    return 'InstallAsk.setOverride(name: $name, broker: $broker)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $InstallAsk_SetOverrideCopyWith<$Res> implements $InstallAskCopyWith<$Res> {
-  factory $InstallAsk_SetOverrideCopyWith(InstallAsk_SetOverride value, $Res Function(InstallAsk_SetOverride) _then) = _$InstallAsk_SetOverrideCopyWithImpl;
-@useResult
-$Res call({
- String name, String broker
-});
-
-
-
-
-}
-/// @nodoc
-class _$InstallAsk_SetOverrideCopyWithImpl<$Res>
-    implements $InstallAsk_SetOverrideCopyWith<$Res> {
-  _$InstallAsk_SetOverrideCopyWithImpl(this._self, this._then);
-
-  final InstallAsk_SetOverride _self;
-  final $Res Function(InstallAsk_SetOverride) _then;
-
-/// Create a copy of InstallAsk
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? name = null,Object? broker = null,}) {
-  return _then(InstallAsk_SetOverride(
-name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
-as String,broker: null == broker ? _self.broker : broker // ignore: cast_nullable_to_non_nullable
-as String,
-  ));
-}
-
 
 }
 
@@ -2479,11 +1981,10 @@ extension InstallEventPatterns on InstallEvent {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( InstallEvent_DnsChecked value)?  dnsChecked,TResult Function( InstallEvent_StockServerStarted value)?  stockServerStarted,TResult Function( InstallEvent_AwaitingStock value)?  awaitingStock,TResult Function( InstallEvent_Waiting value)?  waiting,TResult Function( InstallEvent_VersionLost value)?  versionLost,TResult Function( InstallEvent_StockServerEnded value)?  stockServerEnded,TResult Function( InstallEvent_Requesting value)?  requesting,TResult Function( InstallEvent_StockProgress value)?  stockProgress,TResult Function( InstallEvent_StockRestarting value)?  stockRestarting,TResult Function( InstallEvent_KeyKnown value)?  keyKnown,TResult Function( InstallEvent_SetupStarting value)?  setupStarting,TResult Function( InstallEvent_NoSetupFeeder value)?  noSetupFeeder,TResult Function( InstallEvent_Code value)?  code,TResult Function( InstallEvent_PressDispense value)?  pressDispense,TResult Function( InstallEvent_Paired value)?  paired,TResult Function( InstallEvent_Joined value)?  joined,TResult Function( InstallEvent_ReplacementAnswers value)?  replacementAnswers,TResult Function( InstallEvent_ReadingBackup value)?  readingBackup,TResult Function( InstallEvent_BackupRead value)?  backupRead,TResult Function( InstallEvent_BackupKept value)?  backupKept,TResult Function( InstallEvent_Promoting value)?  promoting,TResult Function( InstallEvent_Written value)?  written,TResult Function( InstallEvent_SessionDropped value)?  sessionDropped,TResult Function( InstallEvent_Activated value)?  activated,TResult Function( InstallEvent_Installed value)?  installed,TResult Function( InstallEvent_Note value)?  note,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( InstallEvent_StockServerStarted value)?  stockServerStarted,TResult Function( InstallEvent_AwaitingStock value)?  awaitingStock,TResult Function( InstallEvent_Waiting value)?  waiting,TResult Function( InstallEvent_VersionLost value)?  versionLost,TResult Function( InstallEvent_StockServerEnded value)?  stockServerEnded,TResult Function( InstallEvent_Requesting value)?  requesting,TResult Function( InstallEvent_StockProgress value)?  stockProgress,TResult Function( InstallEvent_StockRestarting value)?  stockRestarting,TResult Function( InstallEvent_KeyKnown value)?  keyKnown,TResult Function( InstallEvent_SetupStarting value)?  setupStarting,TResult Function( InstallEvent_NoSetupFeeder value)?  noSetupFeeder,TResult Function( InstallEvent_Code value)?  code,TResult Function( InstallEvent_PressDispense value)?  pressDispense,TResult Function( InstallEvent_Paired value)?  paired,TResult Function( InstallEvent_Joined value)?  joined,TResult Function( InstallEvent_ReplacementAnswers value)?  replacementAnswers,TResult Function( InstallEvent_ReadingBackup value)?  readingBackup,TResult Function( InstallEvent_BackupRead value)?  backupRead,TResult Function( InstallEvent_BackupKept value)?  backupKept,TResult Function( InstallEvent_Promoting value)?  promoting,TResult Function( InstallEvent_Written value)?  written,TResult Function( InstallEvent_SessionDropped value)?  sessionDropped,TResult Function( InstallEvent_Activated value)?  activated,TResult Function( InstallEvent_Installed value)?  installed,TResult Function( InstallEvent_Note value)?  note,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
-case InstallEvent_DnsChecked() when dnsChecked != null:
-return dnsChecked(_that);case InstallEvent_StockServerStarted() when stockServerStarted != null:
+case InstallEvent_StockServerStarted() when stockServerStarted != null:
 return stockServerStarted(_that);case InstallEvent_AwaitingStock() when awaitingStock != null:
 return awaitingStock(_that);case InstallEvent_Waiting() when waiting != null:
 return waiting(_that);case InstallEvent_VersionLost() when versionLost != null:
@@ -2526,11 +2027,10 @@ return note(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( InstallEvent_DnsChecked value)  dnsChecked,required TResult Function( InstallEvent_StockServerStarted value)  stockServerStarted,required TResult Function( InstallEvent_AwaitingStock value)  awaitingStock,required TResult Function( InstallEvent_Waiting value)  waiting,required TResult Function( InstallEvent_VersionLost value)  versionLost,required TResult Function( InstallEvent_StockServerEnded value)  stockServerEnded,required TResult Function( InstallEvent_Requesting value)  requesting,required TResult Function( InstallEvent_StockProgress value)  stockProgress,required TResult Function( InstallEvent_StockRestarting value)  stockRestarting,required TResult Function( InstallEvent_KeyKnown value)  keyKnown,required TResult Function( InstallEvent_SetupStarting value)  setupStarting,required TResult Function( InstallEvent_NoSetupFeeder value)  noSetupFeeder,required TResult Function( InstallEvent_Code value)  code,required TResult Function( InstallEvent_PressDispense value)  pressDispense,required TResult Function( InstallEvent_Paired value)  paired,required TResult Function( InstallEvent_Joined value)  joined,required TResult Function( InstallEvent_ReplacementAnswers value)  replacementAnswers,required TResult Function( InstallEvent_ReadingBackup value)  readingBackup,required TResult Function( InstallEvent_BackupRead value)  backupRead,required TResult Function( InstallEvent_BackupKept value)  backupKept,required TResult Function( InstallEvent_Promoting value)  promoting,required TResult Function( InstallEvent_Written value)  written,required TResult Function( InstallEvent_SessionDropped value)  sessionDropped,required TResult Function( InstallEvent_Activated value)  activated,required TResult Function( InstallEvent_Installed value)  installed,required TResult Function( InstallEvent_Note value)  note,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( InstallEvent_StockServerStarted value)  stockServerStarted,required TResult Function( InstallEvent_AwaitingStock value)  awaitingStock,required TResult Function( InstallEvent_Waiting value)  waiting,required TResult Function( InstallEvent_VersionLost value)  versionLost,required TResult Function( InstallEvent_StockServerEnded value)  stockServerEnded,required TResult Function( InstallEvent_Requesting value)  requesting,required TResult Function( InstallEvent_StockProgress value)  stockProgress,required TResult Function( InstallEvent_StockRestarting value)  stockRestarting,required TResult Function( InstallEvent_KeyKnown value)  keyKnown,required TResult Function( InstallEvent_SetupStarting value)  setupStarting,required TResult Function( InstallEvent_NoSetupFeeder value)  noSetupFeeder,required TResult Function( InstallEvent_Code value)  code,required TResult Function( InstallEvent_PressDispense value)  pressDispense,required TResult Function( InstallEvent_Paired value)  paired,required TResult Function( InstallEvent_Joined value)  joined,required TResult Function( InstallEvent_ReplacementAnswers value)  replacementAnswers,required TResult Function( InstallEvent_ReadingBackup value)  readingBackup,required TResult Function( InstallEvent_BackupRead value)  backupRead,required TResult Function( InstallEvent_BackupKept value)  backupKept,required TResult Function( InstallEvent_Promoting value)  promoting,required TResult Function( InstallEvent_Written value)  written,required TResult Function( InstallEvent_SessionDropped value)  sessionDropped,required TResult Function( InstallEvent_Activated value)  activated,required TResult Function( InstallEvent_Installed value)  installed,required TResult Function( InstallEvent_Note value)  note,}){
 final _that = this;
 switch (_that) {
-case InstallEvent_DnsChecked():
-return dnsChecked(_that);case InstallEvent_StockServerStarted():
+case InstallEvent_StockServerStarted():
 return stockServerStarted(_that);case InstallEvent_AwaitingStock():
 return awaitingStock(_that);case InstallEvent_Waiting():
 return waiting(_that);case InstallEvent_VersionLost():
@@ -2569,11 +2069,10 @@ return note(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( InstallEvent_DnsChecked value)?  dnsChecked,TResult? Function( InstallEvent_StockServerStarted value)?  stockServerStarted,TResult? Function( InstallEvent_AwaitingStock value)?  awaitingStock,TResult? Function( InstallEvent_Waiting value)?  waiting,TResult? Function( InstallEvent_VersionLost value)?  versionLost,TResult? Function( InstallEvent_StockServerEnded value)?  stockServerEnded,TResult? Function( InstallEvent_Requesting value)?  requesting,TResult? Function( InstallEvent_StockProgress value)?  stockProgress,TResult? Function( InstallEvent_StockRestarting value)?  stockRestarting,TResult? Function( InstallEvent_KeyKnown value)?  keyKnown,TResult? Function( InstallEvent_SetupStarting value)?  setupStarting,TResult? Function( InstallEvent_NoSetupFeeder value)?  noSetupFeeder,TResult? Function( InstallEvent_Code value)?  code,TResult? Function( InstallEvent_PressDispense value)?  pressDispense,TResult? Function( InstallEvent_Paired value)?  paired,TResult? Function( InstallEvent_Joined value)?  joined,TResult? Function( InstallEvent_ReplacementAnswers value)?  replacementAnswers,TResult? Function( InstallEvent_ReadingBackup value)?  readingBackup,TResult? Function( InstallEvent_BackupRead value)?  backupRead,TResult? Function( InstallEvent_BackupKept value)?  backupKept,TResult? Function( InstallEvent_Promoting value)?  promoting,TResult? Function( InstallEvent_Written value)?  written,TResult? Function( InstallEvent_SessionDropped value)?  sessionDropped,TResult? Function( InstallEvent_Activated value)?  activated,TResult? Function( InstallEvent_Installed value)?  installed,TResult? Function( InstallEvent_Note value)?  note,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( InstallEvent_StockServerStarted value)?  stockServerStarted,TResult? Function( InstallEvent_AwaitingStock value)?  awaitingStock,TResult? Function( InstallEvent_Waiting value)?  waiting,TResult? Function( InstallEvent_VersionLost value)?  versionLost,TResult? Function( InstallEvent_StockServerEnded value)?  stockServerEnded,TResult? Function( InstallEvent_Requesting value)?  requesting,TResult? Function( InstallEvent_StockProgress value)?  stockProgress,TResult? Function( InstallEvent_StockRestarting value)?  stockRestarting,TResult? Function( InstallEvent_KeyKnown value)?  keyKnown,TResult? Function( InstallEvent_SetupStarting value)?  setupStarting,TResult? Function( InstallEvent_NoSetupFeeder value)?  noSetupFeeder,TResult? Function( InstallEvent_Code value)?  code,TResult? Function( InstallEvent_PressDispense value)?  pressDispense,TResult? Function( InstallEvent_Paired value)?  paired,TResult? Function( InstallEvent_Joined value)?  joined,TResult? Function( InstallEvent_ReplacementAnswers value)?  replacementAnswers,TResult? Function( InstallEvent_ReadingBackup value)?  readingBackup,TResult? Function( InstallEvent_BackupRead value)?  backupRead,TResult? Function( InstallEvent_BackupKept value)?  backupKept,TResult? Function( InstallEvent_Promoting value)?  promoting,TResult? Function( InstallEvent_Written value)?  written,TResult? Function( InstallEvent_SessionDropped value)?  sessionDropped,TResult? Function( InstallEvent_Activated value)?  activated,TResult? Function( InstallEvent_Installed value)?  installed,TResult? Function( InstallEvent_Note value)?  note,}){
 final _that = this;
 switch (_that) {
-case InstallEvent_DnsChecked() when dnsChecked != null:
-return dnsChecked(_that);case InstallEvent_StockServerStarted() when stockServerStarted != null:
+case InstallEvent_StockServerStarted() when stockServerStarted != null:
 return stockServerStarted(_that);case InstallEvent_AwaitingStock() when awaitingStock != null:
 return awaitingStock(_that);case InstallEvent_Waiting() when waiting != null:
 return waiting(_that);case InstallEvent_VersionLost() when versionLost != null:
@@ -2615,10 +2114,9 @@ return note(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( DnsResult result)?  dnsChecked,TResult Function()?  stockServerStarted,TResult Function()?  awaitingStock,TResult Function( WaitReason why)?  waiting,TResult Function()?  versionLost,TResult Function( String error)?  stockServerEnded,TResult Function( String build)?  requesting,TResult Function( int percent)?  stockProgress,TResult Function()?  stockRestarting,TResult Function()?  keyKnown,TResult Function()?  setupStarting,TResult Function( String error)?  noSetupFeeder,TResult Function( Uint8List code,  int seconds)?  code,TResult Function()?  pressDispense,TResult Function( Uint8List identity,  String? address,  bool rebooting)?  paired,TResult Function( String address)?  joined,TResult Function( String build,  int bank)?  replacementAnswers,TResult Function( int total)?  readingBackup,TResult Function( BigInt bytes,  int total)?  backupRead,TResult Function( String path)?  backupKept,TResult Function()?  promoting,TResult Function( int written,  int length)?  written,TResult Function()?  sessionDropped,TResult Function()?  activated,TResult Function( String build)?  installed,TResult Function( String text)?  note,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  stockServerStarted,TResult Function()?  awaitingStock,TResult Function( WaitReason why)?  waiting,TResult Function()?  versionLost,TResult Function( String error)?  stockServerEnded,TResult Function( String build)?  requesting,TResult Function( int percent)?  stockProgress,TResult Function()?  stockRestarting,TResult Function()?  keyKnown,TResult Function()?  setupStarting,TResult Function( String error)?  noSetupFeeder,TResult Function( Uint8List code,  int seconds)?  code,TResult Function()?  pressDispense,TResult Function( Uint8List identity,  String? address,  bool rebooting)?  paired,TResult Function( String address)?  joined,TResult Function( String build,  int bank)?  replacementAnswers,TResult Function( int total)?  readingBackup,TResult Function( BigInt bytes,  int total)?  backupRead,TResult Function( String path)?  backupKept,TResult Function()?  promoting,TResult Function( int written,  int length)?  written,TResult Function()?  sessionDropped,TResult Function()?  activated,TResult Function( String build)?  installed,TResult Function( String text)?  note,required TResult orElse(),}) {final _that = this;
 switch (_that) {
-case InstallEvent_DnsChecked() when dnsChecked != null:
-return dnsChecked(_that.result);case InstallEvent_StockServerStarted() when stockServerStarted != null:
+case InstallEvent_StockServerStarted() when stockServerStarted != null:
 return stockServerStarted();case InstallEvent_AwaitingStock() when awaitingStock != null:
 return awaitingStock();case InstallEvent_Waiting() when waiting != null:
 return waiting(_that.why);case InstallEvent_VersionLost() when versionLost != null:
@@ -2661,10 +2159,9 @@ return note(_that.text);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( DnsResult result)  dnsChecked,required TResult Function()  stockServerStarted,required TResult Function()  awaitingStock,required TResult Function( WaitReason why)  waiting,required TResult Function()  versionLost,required TResult Function( String error)  stockServerEnded,required TResult Function( String build)  requesting,required TResult Function( int percent)  stockProgress,required TResult Function()  stockRestarting,required TResult Function()  keyKnown,required TResult Function()  setupStarting,required TResult Function( String error)  noSetupFeeder,required TResult Function( Uint8List code,  int seconds)  code,required TResult Function()  pressDispense,required TResult Function( Uint8List identity,  String? address,  bool rebooting)  paired,required TResult Function( String address)  joined,required TResult Function( String build,  int bank)  replacementAnswers,required TResult Function( int total)  readingBackup,required TResult Function( BigInt bytes,  int total)  backupRead,required TResult Function( String path)  backupKept,required TResult Function()  promoting,required TResult Function( int written,  int length)  written,required TResult Function()  sessionDropped,required TResult Function()  activated,required TResult Function( String build)  installed,required TResult Function( String text)  note,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  stockServerStarted,required TResult Function()  awaitingStock,required TResult Function( WaitReason why)  waiting,required TResult Function()  versionLost,required TResult Function( String error)  stockServerEnded,required TResult Function( String build)  requesting,required TResult Function( int percent)  stockProgress,required TResult Function()  stockRestarting,required TResult Function()  keyKnown,required TResult Function()  setupStarting,required TResult Function( String error)  noSetupFeeder,required TResult Function( Uint8List code,  int seconds)  code,required TResult Function()  pressDispense,required TResult Function( Uint8List identity,  String? address,  bool rebooting)  paired,required TResult Function( String address)  joined,required TResult Function( String build,  int bank)  replacementAnswers,required TResult Function( int total)  readingBackup,required TResult Function( BigInt bytes,  int total)  backupRead,required TResult Function( String path)  backupKept,required TResult Function()  promoting,required TResult Function( int written,  int length)  written,required TResult Function()  sessionDropped,required TResult Function()  activated,required TResult Function( String build)  installed,required TResult Function( String text)  note,}) {final _that = this;
 switch (_that) {
-case InstallEvent_DnsChecked():
-return dnsChecked(_that.result);case InstallEvent_StockServerStarted():
+case InstallEvent_StockServerStarted():
 return stockServerStarted();case InstallEvent_AwaitingStock():
 return awaitingStock();case InstallEvent_Waiting():
 return waiting(_that.why);case InstallEvent_VersionLost():
@@ -2703,10 +2200,9 @@ return note(_that.text);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( DnsResult result)?  dnsChecked,TResult? Function()?  stockServerStarted,TResult? Function()?  awaitingStock,TResult? Function( WaitReason why)?  waiting,TResult? Function()?  versionLost,TResult? Function( String error)?  stockServerEnded,TResult? Function( String build)?  requesting,TResult? Function( int percent)?  stockProgress,TResult? Function()?  stockRestarting,TResult? Function()?  keyKnown,TResult? Function()?  setupStarting,TResult? Function( String error)?  noSetupFeeder,TResult? Function( Uint8List code,  int seconds)?  code,TResult? Function()?  pressDispense,TResult? Function( Uint8List identity,  String? address,  bool rebooting)?  paired,TResult? Function( String address)?  joined,TResult? Function( String build,  int bank)?  replacementAnswers,TResult? Function( int total)?  readingBackup,TResult? Function( BigInt bytes,  int total)?  backupRead,TResult? Function( String path)?  backupKept,TResult? Function()?  promoting,TResult? Function( int written,  int length)?  written,TResult? Function()?  sessionDropped,TResult? Function()?  activated,TResult? Function( String build)?  installed,TResult? Function( String text)?  note,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  stockServerStarted,TResult? Function()?  awaitingStock,TResult? Function( WaitReason why)?  waiting,TResult? Function()?  versionLost,TResult? Function( String error)?  stockServerEnded,TResult? Function( String build)?  requesting,TResult? Function( int percent)?  stockProgress,TResult? Function()?  stockRestarting,TResult? Function()?  keyKnown,TResult? Function()?  setupStarting,TResult? Function( String error)?  noSetupFeeder,TResult? Function( Uint8List code,  int seconds)?  code,TResult? Function()?  pressDispense,TResult? Function( Uint8List identity,  String? address,  bool rebooting)?  paired,TResult? Function( String address)?  joined,TResult? Function( String build,  int bank)?  replacementAnswers,TResult? Function( int total)?  readingBackup,TResult? Function( BigInt bytes,  int total)?  backupRead,TResult? Function( String path)?  backupKept,TResult? Function()?  promoting,TResult? Function( int written,  int length)?  written,TResult? Function()?  sessionDropped,TResult? Function()?  activated,TResult? Function( String build)?  installed,TResult? Function( String text)?  note,}) {final _that = this;
 switch (_that) {
-case InstallEvent_DnsChecked() when dnsChecked != null:
-return dnsChecked(_that.result);case InstallEvent_StockServerStarted() when stockServerStarted != null:
+case InstallEvent_StockServerStarted() when stockServerStarted != null:
 return stockServerStarted();case InstallEvent_AwaitingStock() when awaitingStock != null:
 return awaitingStock();case InstallEvent_Waiting() when waiting != null:
 return waiting(_that.why);case InstallEvent_VersionLost() when versionLost != null:
@@ -2737,83 +2233,6 @@ return note(_that.text);case _:
 }
 }
 
-}
-
-/// @nodoc
-
-
-class InstallEvent_DnsChecked extends InstallEvent {
-  const InstallEvent_DnsChecked({required this.result}): super._();
-  
-
- final  DnsResult result;
-
-/// Create a copy of InstallEvent
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$InstallEvent_DnsCheckedCopyWith<InstallEvent_DnsChecked> get copyWith => _$InstallEvent_DnsCheckedCopyWithImpl<InstallEvent_DnsChecked>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallEvent_DnsChecked&&(identical(other.result, result) || other.result == result));
-}
-
-
-@override
-int get hashCode {
-    return Object.hash(runtimeType,result);
-}
-
-@override
-String toString() {
-    return 'InstallEvent.dnsChecked(result: $result)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $InstallEvent_DnsCheckedCopyWith<$Res> implements $InstallEventCopyWith<$Res> {
-  factory $InstallEvent_DnsCheckedCopyWith(InstallEvent_DnsChecked value, $Res Function(InstallEvent_DnsChecked) _then) = _$InstallEvent_DnsCheckedCopyWithImpl;
-@useResult
-$Res call({
- DnsResult result
-});
-
-
-$DnsResultCopyWith<$Res> get result;
-
-}
-/// @nodoc
-class _$InstallEvent_DnsCheckedCopyWithImpl<$Res>
-    implements $InstallEvent_DnsCheckedCopyWith<$Res> {
-  _$InstallEvent_DnsCheckedCopyWithImpl(this._self, this._then);
-
-  final InstallEvent_DnsChecked _self;
-  final $Res Function(InstallEvent_DnsChecked) _then;
-
-/// Create a copy of InstallEvent
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? result = null,}) {
-  return _then(InstallEvent_DnsChecked(
-result: null == result ? _self.result : result // ignore: cast_nullable_to_non_nullable
-as DnsResult,
-  ));
-}
-
-/// Create a copy of InstallEvent
-/// with the given fields replaced by the non-null parameter values.
-@override
-@pragma('vm:prefer-inline')
-$DnsResultCopyWith<$Res> get result {
-  
-  return $DnsResultCopyWith<$Res>(_self.result, (value) {
-    return _then(_self.copyWith(result: value));
-  });
-}
 }
 
 /// @nodoc
@@ -4167,342 +3586,6 @@ as String,
 
 
 }
-
-/// @nodoc
-mixin _$InstallStart {
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallStart);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'InstallStart()';
-}
-
-
-}
-
-/// @nodoc
-class $InstallStartCopyWith<$Res>  {
-$InstallStartCopyWith(InstallStart _, $Res Function(InstallStart) __);
-}
-
-
-/// Adds pattern-matching-related methods to [InstallStart].
-extension InstallStartPatterns on InstallStart {
-/// A variant of `map` that fallback to returning `orElse`.
-///
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case final Subclass value:
-///     return ...;
-///   case _:
-///     return orElse();
-/// }
-/// ```
-
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( InstallStart_Dns value)?  dns,TResult Function( InstallStart_Reset value)?  reset,TResult Function( InstallStart_FrameTaken value)?  frameTaken,TResult Function( InstallStart_Bank0 value)?  bank0,required TResult orElse(),}){
-final _that = this;
-switch (_that) {
-case InstallStart_Dns() when dns != null:
-return dns(_that);case InstallStart_Reset() when reset != null:
-return reset(_that);case InstallStart_FrameTaken() when frameTaken != null:
-return frameTaken(_that);case InstallStart_Bank0() when bank0 != null:
-return bank0(_that);case _:
-  return orElse();
-
-}
-}
-/// A `switch`-like method, using callbacks.
-///
-/// Callbacks receives the raw object, upcasted.
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case final Subclass value:
-///     return ...;
-///   case final Subclass2 value:
-///     return ...;
-/// }
-/// ```
-
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( InstallStart_Dns value)  dns,required TResult Function( InstallStart_Reset value)  reset,required TResult Function( InstallStart_FrameTaken value)  frameTaken,required TResult Function( InstallStart_Bank0 value)  bank0,}){
-final _that = this;
-switch (_that) {
-case InstallStart_Dns():
-return dns(_that);case InstallStart_Reset():
-return reset(_that);case InstallStart_FrameTaken():
-return frameTaken(_that);case InstallStart_Bank0():
-return bank0(_that);}
-}
-/// A variant of `map` that fallback to returning `null`.
-///
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case final Subclass value:
-///     return ...;
-///   case _:
-///     return null;
-/// }
-/// ```
-
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( InstallStart_Dns value)?  dns,TResult? Function( InstallStart_Reset value)?  reset,TResult? Function( InstallStart_FrameTaken value)?  frameTaken,TResult? Function( InstallStart_Bank0 value)?  bank0,}){
-final _that = this;
-switch (_that) {
-case InstallStart_Dns() when dns != null:
-return dns(_that);case InstallStart_Reset() when reset != null:
-return reset(_that);case InstallStart_FrameTaken() when frameTaken != null:
-return frameTaken(_that);case InstallStart_Bank0() when bank0 != null:
-return bank0(_that);case _:
-  return null;
-
-}
-}
-/// A variant of `when` that fallback to an `orElse` callback.
-///
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case Subclass(:final field):
-///     return ...;
-///   case _:
-///     return orElse();
-/// }
-/// ```
-
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String name)?  dns,TResult Function()?  reset,TResult Function()?  frameTaken,TResult Function()?  bank0,required TResult orElse(),}) {final _that = this;
-switch (_that) {
-case InstallStart_Dns() when dns != null:
-return dns(_that.name);case InstallStart_Reset() when reset != null:
-return reset();case InstallStart_FrameTaken() when frameTaken != null:
-return frameTaken();case InstallStart_Bank0() when bank0 != null:
-return bank0();case _:
-  return orElse();
-
-}
-}
-/// A `switch`-like method, using callbacks.
-///
-/// As opposed to `map`, this offers destructuring.
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case Subclass(:final field):
-///     return ...;
-///   case Subclass2(:final field2):
-///     return ...;
-/// }
-/// ```
-
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String name)  dns,required TResult Function()  reset,required TResult Function()  frameTaken,required TResult Function()  bank0,}) {final _that = this;
-switch (_that) {
-case InstallStart_Dns():
-return dns(_that.name);case InstallStart_Reset():
-return reset();case InstallStart_FrameTaken():
-return frameTaken();case InstallStart_Bank0():
-return bank0();}
-}
-/// A variant of `when` that fallback to returning `null`
-///
-/// It is equivalent to doing:
-/// ```dart
-/// switch (sealedClass) {
-///   case Subclass(:final field):
-///     return ...;
-///   case _:
-///     return null;
-/// }
-/// ```
-
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String name)?  dns,TResult? Function()?  reset,TResult? Function()?  frameTaken,TResult? Function()?  bank0,}) {final _that = this;
-switch (_that) {
-case InstallStart_Dns() when dns != null:
-return dns(_that.name);case InstallStart_Reset() when reset != null:
-return reset();case InstallStart_FrameTaken() when frameTaken != null:
-return frameTaken();case InstallStart_Bank0() when bank0 != null:
-return bank0();case _:
-  return null;
-
-}
-}
-
-}
-
-/// @nodoc
-
-
-class InstallStart_Dns extends InstallStart {
-  const InstallStart_Dns({required this.name}): super._();
-  
-
- final  String name;
-
-/// Create a copy of InstallStart
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$InstallStart_DnsCopyWith<InstallStart_Dns> get copyWith => _$InstallStart_DnsCopyWithImpl<InstallStart_Dns>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallStart_Dns&&(identical(other.name, name) || other.name == name));
-}
-
-
-@override
-int get hashCode {
-    return Object.hash(runtimeType,name);
-}
-
-@override
-String toString() {
-    return 'InstallStart.dns(name: $name)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $InstallStart_DnsCopyWith<$Res> implements $InstallStartCopyWith<$Res> {
-  factory $InstallStart_DnsCopyWith(InstallStart_Dns value, $Res Function(InstallStart_Dns) _then) = _$InstallStart_DnsCopyWithImpl;
-@useResult
-$Res call({
- String name
-});
-
-
-
-
-}
-/// @nodoc
-class _$InstallStart_DnsCopyWithImpl<$Res>
-    implements $InstallStart_DnsCopyWith<$Res> {
-  _$InstallStart_DnsCopyWithImpl(this._self, this._then);
-
-  final InstallStart_Dns _self;
-  final $Res Function(InstallStart_Dns) _then;
-
-/// Create a copy of InstallStart
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? name = null,}) {
-  return _then(InstallStart_Dns(
-name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
-as String,
-  ));
-}
-
-
-}
-
-/// @nodoc
-
-
-class InstallStart_Reset extends InstallStart {
-  const InstallStart_Reset(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallStart_Reset);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'InstallStart.reset()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
-
-
-class InstallStart_FrameTaken extends InstallStart {
-  const InstallStart_FrameTaken(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallStart_FrameTaken);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'InstallStart.frameTaken()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
-
-
-class InstallStart_Bank0 extends InstallStart {
-  const InstallStart_Bank0(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallStart_Bank0);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'InstallStart.bank0()';
-}
-
-
-}
-
-
-
 
 /// @nodoc
 mixin _$InstallUpdate {

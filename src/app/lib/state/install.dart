@@ -29,9 +29,6 @@ enum InstallStage {
   /// The reset route: join the feeder's network, send the Wi-Fi, come back.
   handover,
 
-  /// The DNS record, its check and the wait for the feeder.
-  record,
-
   /// A feeder connected: is it the owner's?
   confirm,
 
@@ -45,16 +42,6 @@ enum InstallStage {
   finishing,
   done,
   stopped,
-}
-
-/// How the feeder finds this phone.
-enum InstallRoute {
-  /// It is reset, and told over its own setup network. Nothing to change on
-  /// the router; its meals are erased.
-  reset,
-
-  /// The router's DNS sends it here. Its meals don't come along either.
-  dns,
 }
 
 /// Where the handover is.
@@ -114,8 +101,6 @@ class InstallFlow extends ChangeNotifier {
   PendingInstall pending = PendingInstall.nothing;
   InstallPaths? _paths;
 
-  InstallRoute route = InstallRoute.reset;
-
   // The handover.
   Handover handover = Handover.starting;
   int? _joinAsk;
@@ -132,11 +117,7 @@ class InstallFlow extends ChangeNotifier {
   bool _frameTaken = false;
   String? _frameAddress;
 
-  // The record.
   String? phoneIp;
-  String brokerName = '';
-  DnsResult? dns;
-  bool checking = false;
 
   WaitReason? waitReason;
 
@@ -188,7 +169,6 @@ class InstallFlow extends ChangeNotifier {
   String? listenerDetail;
 
   WifiCredentials? _home;
-  bool _calibrate = false;
   bool _forget = false;
 
   /// The owner gave a new Wi-Fi for a feeder that never joined: the run goes
@@ -302,14 +282,8 @@ class InstallFlow extends ChangeNotifier {
     _go(InstallStage.before);
   }
 
-  /// Choose how the feeder finds this phone.
-  void chooseRoute(InstallRoute next) {
-    route = next;
-    _notify();
-  }
-
   /// On from the first screen: the phone's name if it has none, then the
-  /// Wi-Fi the route needs, then the route's own screen.
+  /// Wi-Fi, then the Reset hold.
   Future<bool> begin() async {
     if (!await _permissions()) return false;
     phoneIp = await _ports.phoneAddress();
@@ -344,7 +318,7 @@ class InstallFlow extends ChangeNotifier {
       unawaited(resume(address: _resumeAddress));
       return;
     }
-    if (route == InstallRoute.reset && _feederReset) {
+    if (_feederReset) {
       unawaited(startHandover());
       return;
     }
@@ -365,33 +339,12 @@ class InstallFlow extends ChangeNotifier {
   }
 
   void _nextAfter(InstallStage from) {
-    final reset = route == InstallRoute.reset;
-    final wantsWifi = reset || provisioning == ImageProvisioning.consumer;
-    final afterWifi = reset ? InstallStage.reset : InstallStage.record;
     final next = switch (from) {
       InstallStage.before when _book.label.isEmpty => InstallStage.naming,
-      InstallStage.before ||
-      InstallStage.naming => wantsWifi ? InstallStage.wifi : afterWifi,
-      _ => afterWifi,
+      InstallStage.before || InstallStage.naming => InstallStage.wifi,
+      _ => InstallStage.reset,
     };
     _go(next);
-  }
-
-  /// Look the record up from this phone. When it points here the run starts
-  /// at once; otherwise the owner fixes it, or goes on anyway: this phone may
-  /// ask another resolver than the feeder does, so stock arriving at the
-  /// broker is the real check.
-  Future<void> checkRecord(String name) async {
-    final ip = phoneIp;
-    if (ip == null || checking) return;
-    brokerName = name.trim();
-    checking = true;
-    _notify();
-    final result = await _ports.checkDns(brokerName, ip);
-    checking = false;
-    dns = result;
-    _notify();
-    if (result is DnsResult_Points) await startRun();
   }
 
   /// The owner held Reset: start the broker, then the handover. A feeder that
@@ -417,9 +370,7 @@ class InstallFlow extends ChangeNotifier {
     handover = _frameTaken ? Handover.waiting : Handover.starting;
     _go(InstallStage.handover);
     await _start(
-      _frameTaken
-          ? const InstallStart.frameTaken()
-          : const InstallStart.reset(),
+      _frameTaken ? InstallStart.frameTaken : InstallStart.reset,
       ip,
     );
   }
@@ -472,13 +423,6 @@ class InstallFlow extends ChangeNotifier {
     );
   }
 
-  /// Start the run from stock.
-  Future<void> startRun() async {
-    final ip = phoneIp;
-    if (ip == null || brokerName.isEmpty) return;
-    await _start(InstallStart.dns(name: brokerName), ip);
-  }
-
   /// Pick up from bank 0: the replacement runs, and only its owner is
   /// missing, or the backup and the promotion. With `address`, it answers
   /// there. A consumer image that never paired needs its Wi-Fi for Bluetooth
@@ -512,7 +456,7 @@ class InstallFlow extends ChangeNotifier {
     stop = null;
     _resetProgress();
     _go(InstallStage.claim);
-    await _start(const InstallStart.bank0(), ip, address: address);
+    await _start(InstallStart.bank0, ip, address: address);
   }
 
   /// A request from an earlier run has no settled outcome: listen for what
@@ -579,8 +523,7 @@ class InstallFlow extends ChangeNotifier {
   }
 
   /// The stop's way on: from the start, or from bank 0, as the run said.
-  Future<void> again({bool calibrate = false, bool forget = false}) async {
-    _calibrate = calibrate;
+  Future<void> again({bool forget = false}) async {
     _forget = forget;
     final resumeFrom = stop?.resume;
     if (resumeFrom == Resume.fromBank0) {
@@ -597,18 +540,15 @@ class InstallFlow extends ChangeNotifier {
     listening = Listening.idle;
     waitReason = null;
     restartAgain = false;
-    dns = null;
     // A fresh launch can get here from an open request, with neither asked yet.
-    final reset = route == InstallRoute.reset;
     if (_book.label.isEmpty) {
       _go(InstallStage.naming);
-    } else if (_home == null &&
-        (reset || provisioning == ImageProvisioning.consumer)) {
+    } else if (_home == null) {
       _go(InstallStage.wifi);
-    } else if (reset && _feederReset) {
+    } else if (_feederReset) {
       await startHandover();
     } else {
-      _go(reset ? InstallStage.reset : InstallStage.record);
+      _go(InstallStage.reset);
     }
   }
 
@@ -631,7 +571,6 @@ class InstallFlow extends ChangeNotifier {
         storePath: paths.store,
         imageDir: paths.image,
         dataDir: paths.data,
-        calibrateClock: _calibrate,
         forgetEnrollment: forget,
         setupAgain: settingUpAgain,
       ),
@@ -688,9 +627,6 @@ class InstallFlow extends ChangeNotifier {
     void answer(InstallAnswer answer) => run.answer(id: id, answer: answer);
 
     switch (ask) {
-      // Asked here only once the owner looked at the record.
-      case InstallAsk_SetOverride():
-        answer(const InstallAnswer.done());
       // The screen says to restart it; the broker is already listening.
       case InstallAsk_RestartFeeder():
         answer(const InstallAnswer.done());
@@ -702,10 +638,8 @@ class InstallFlow extends ChangeNotifier {
       case InstallAsk_RecognizeFeeder(:final device, :final address):
         // Whatever reached the broker took the frame, and has no setup network
         // to take another.
-        if (route == InstallRoute.reset) {
-          _frameTaken = true;
-          _frameAddress = phoneIp;
-        }
+        _frameTaken = true;
+        _frameAddress = phoneIp;
         this.device = device;
         deviceAddress = address;
         _recognizeAsk = id;
@@ -748,8 +682,6 @@ class InstallFlow extends ChangeNotifier {
 
   Future<void> _event(InstallEvent event) async {
     switch (event) {
-      case InstallEvent_DnsChecked(:final result):
-        dns = result;
       case InstallEvent_Waiting(:final why):
         waitReason = why;
       case InstallEvent_VersionLost():

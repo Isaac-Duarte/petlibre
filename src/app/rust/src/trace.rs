@@ -47,8 +47,7 @@ fn event_line(event: &InstallEvent) -> Option<String> {
         )),
 
         // Status and addresses, with nothing of the owner's in them.
-        InstallEvent::DnsChecked { .. }
-        | InstallEvent::StockServerStarted
+        InstallEvent::StockServerStarted
         | InstallEvent::AwaitingStock
         | InstallEvent::Waiting { .. }
         | InstallEvent::VersionLost
@@ -76,8 +75,7 @@ fn asked(ask: &InstallAsk) -> String {
         // These pieces are the setup exchange, the passphrase among them.
         InstallAsk::WriteLink { pieces } => format!("write {} pieces to the link", pieces.len()),
 
-        InstallAsk::SetOverride { .. }
-        | InstallAsk::RestartFeeder
+        InstallAsk::RestartFeeder
         | InstallAsk::JoinFeederNetwork
         | InstallAsk::LeaveFeederNetwork
         | InstallAsk::RecognizeFeeder { .. }

@@ -74,7 +74,6 @@ pub async fn listen(
         server::Options {
             trial: OtaTrial::Disabled,
             enroll: None,
-            clock: wellfed_stock::clock::Policy::Bounded,
             api: Api::Off,
             bind: server::Bind::Configured,
         },

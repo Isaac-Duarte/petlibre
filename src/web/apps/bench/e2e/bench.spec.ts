@@ -251,17 +251,7 @@ test.describe("a write's life on the idle bench", () => {
     // Opened without the console's link first: the question shows, but no
     // buttons do.
     await plain.goto(`${IDLE}/`);
-    const install = client([
-      "install",
-      "--review",
-      "r",
-      "--manifest",
-      "m",
-      "--stock-config",
-      "c",
-      "--broker-name",
-      "broker.example.net",
-    ]);
+    const install = client(["install", "--review", "r", "--manifest", "m", "--stock-config", "c"]);
     // Taken now: the client may exit before the page has seen the end.
     const finished = ended(install);
 

@@ -191,14 +191,12 @@ class FakeInstallPorts implements InstallPorts {
       version: 7,
     ),
     this.build = const BuildCheck.reviewable(),
-    this.dns = const DnsResult.points(),
     this.ip = '192.168.1.23',
     this.pendingInstall = PendingInstall.nothing,
   });
 
   ImageCheck image;
   BuildCheck build;
-  DnsResult dns;
   String? ip;
   PendingInstall pendingInstall;
   bool holds = true;
@@ -209,7 +207,6 @@ class FakeInstallPorts implements InstallPorts {
   final specs = <InstallSpec>[];
   final runs = <FakeRun>[];
   final listeners = <FakeListener>[];
-  final dnsAsked = <String>[];
   final held = <String>[];
   int releases = 0;
   final shared = <String>[];
@@ -261,12 +258,6 @@ class FakeInstallPorts implements InstallPorts {
   Future<String?> leaveFeederNetwork() async {
     left++;
     return ipAfterLeaving ?? ip;
-  }
-
-  @override
-  Future<DnsResult> checkDns(String name, String phoneIp) async {
-    dnsAsked.add(name);
-    return dns;
   }
 
   @override

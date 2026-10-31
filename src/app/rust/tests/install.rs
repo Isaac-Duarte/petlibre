@@ -14,13 +14,13 @@ use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 use wellfed_app_bridge::api::install::PendingInstall;
 use wellfed_app_bridge::api::install::{
-    DnsResult, ImageCheck, ImageProvisioning, InstallAnswer, InstallAsk, InstallEnd, InstallEvent,
+    ImageCheck, ImageProvisioning, InstallAnswer, InstallAsk, InstallEnd, InstallEvent,
     InstallSpec, InstallStart, InstallUpdate, ListenUpdate, Resume, StopCase,
 };
 use wellfed_app_bridge::api::model::SetupRefusal;
 use wellfed_app_bridge::api::setup::WifiCredentials;
 use wellfed_app_bridge::api::store::KnownFeeder;
-use wellfed_app_bridge::install::{Listener, Pin, Run, check_dns, check_image, pending};
+use wellfed_app_bridge::install::{Listener, Pin, Run, check_image, pending};
 use wellfed_client::setup::{Deframer, frame};
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::{Running, SetupFeeder};
@@ -132,7 +132,6 @@ impl Fixture {
             store_path: path("app.json"),
             image_dir: path("image"),
             data_dir: path("install"),
-            calibrate_clock: false,
             forget_enrollment: false,
             setup_again: false,
         }
@@ -177,30 +176,20 @@ async fn ended(heard: &mut mpsc::UnboundedReceiver<InstallUpdate>) -> InstallEnd
     }
 }
 
-fn dns_spec(fixture: &Fixture, phone: &str) -> InstallSpec {
-    let start = InstallStart::Dns {
-        name: "broker.example.net".into(),
-    };
-    fixture.spec(start, phone)
-}
-
-/// The first thing a DNS route does is ask for the override, naming this
-/// phone; a stop while it waits ends the run with nothing sent, free to
-/// start over.
+/// The first thing a Reset route does is ask to join the feeder's network; a
+/// stop while it waits ends the run with nothing sent, free to start over.
 #[test]
 fn a_stop_while_a_person_is_asked_ends_the_run() {
+    // SAFETY: nextest runs each test in a process of its own, and no other
+    // thread is running yet.
+    unsafe { std::env::set_var("WELLFED_ALLOW_UNREVIEWED_OTA_BUILD", "1") };
     local(async {
         let fixture = Fixture::new(Provisioning::Consumer);
-        let (run, mut heard) = started(&fixture, dns_spec(&fixture, "127.41.8.1"));
+        let spec = fixture.spec(InstallStart::Reset, "127.41.8.1");
+        let (run, mut heard) = started(&fixture, spec);
 
         let (_, ask) = next_ask(&mut heard).await;
-        assert_eq!(
-            ask,
-            InstallAsk::SetOverride {
-                name: "broker.example.net".into(),
-                broker: "127.41.8.1".into(),
-            }
-        );
+        assert_eq!(ask, InstallAsk::JoinFeederNetwork);
 
         run.stop();
         let InstallEnd::Stopped { case, resume, .. } = ended(&mut heard).await else {
@@ -215,9 +204,12 @@ fn a_stop_while_a_person_is_asked_ends_the_run() {
 /// an answer to an ask nobody waits for is dropped.
 #[test]
 fn an_ask_that_fails_ends_the_run_in_its_words() {
+    // SAFETY: nextest runs each test in a process of its own, and no other
+    // thread is running yet.
+    unsafe { std::env::set_var("WELLFED_ALLOW_UNREVIEWED_OTA_BUILD", "1") };
     local(async {
         let fixture = Fixture::new(Provisioning::Consumer);
-        let (run, mut heard) = started(&fixture, dns_spec(&fixture, "127.41.8.2"));
+        let (run, mut heard) = started(&fixture, fixture.spec(InstallStart::Reset, "127.41.8.2"));
 
         let (id, _) = next_ask(&mut heard).await;
         run.answer(
@@ -230,7 +222,10 @@ fn an_ask_that_fails_ends_the_run_in_its_words() {
         let InstallEnd::Stopped { detail, .. } = end else {
             panic!("{end:?}");
         };
-        assert_eq!(detail, "the screen went away");
+        assert_eq!(
+            detail,
+            "the handover over the feeder's setup network: the screen went away"
+        );
         run.answer(id, InstallAnswer::Done);
     });
 }
@@ -243,7 +238,7 @@ fn a_run_with_nobody_listening_ends() {
     let run = Run::new(Some(fixture.pin));
     let (done, finished) = std::sync::mpsc::channel();
     run.start(
-        Some(dns_spec(&fixture, "127.41.8.3")),
+        Some(fixture.spec(InstallStart::Reset, "127.41.8.3")),
         Keypair::from_secret([0x51; 32]),
         move |update| {
             if let InstallUpdate::Ended { end } = update {
@@ -284,7 +279,7 @@ fn a_run_with_no_image_stops_before_anything_starts() {
     local(async {
         let fixture = Fixture::new(Provisioning::Consumer);
         std::fs::remove_file(fixture.dir.path().join("image/image.bin")).unwrap();
-        let (_run, mut heard) = started(&fixture, dns_spec(&fixture, "127.41.8.4"));
+        let (_run, mut heard) = started(&fixture, fixture.spec(InstallStart::Reset, "127.41.8.4"));
         let end = ended(&mut heard).await;
         assert!(
             matches!(
@@ -576,19 +571,6 @@ fn the_image_is_checked_against_its_pin_and_its_own_review() {
     ));
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn a_name_that_cannot_be_a_brokers_is_refused_before_any_lookup() {
-    assert_eq!(
-        check_dns("1.2.3.4", "192.168.1.9").await,
-        DnsResult::BadName
-    );
-    assert_eq!(check_dns("", "192.168.1.9").await, DnsResult::BadName);
-    assert_eq!(
-        check_dns("broker.example.net", "not an address").await,
-        DnsResult::Unresolved
-    );
-}
-
 #[test]
 fn a_listener_with_no_enrolled_feeder_says_so() {
     let dir = tempfile::tempdir().unwrap();
@@ -789,24 +771,27 @@ async fn to_the_feeder_check(
     let (run, mut heard) = started(fixture, spec);
     let mut feeder = None;
     loop {
-        let (id, ask) = next_ask(&mut heard).await;
-        match ask {
-            InstallAsk::SetOverride { .. } => run.answer(id, InstallAnswer::Done),
+        match next(&mut heard).await {
             // The broker is listening now, and only now may the feeder come.
-            InstallAsk::RestartFeeder => {
-                run.answer(id, InstallAnswer::Done);
-                feeder = Some(stock_feeder(broker, device));
-            }
-            InstallAsk::RecognizeFeeder {
-                device: asked,
-                address,
+            InstallUpdate::Event {
+                event: InstallEvent::StockServerStarted,
+            } => feeder = Some(stock_feeder(broker, device)),
+            InstallUpdate::Event { .. } => {}
+            InstallUpdate::Ask {
+                id,
+                ask:
+                    InstallAsk::RecognizeFeeder {
+                        device: asked,
+                        address,
+                    },
             } => {
                 assert_eq!(asked, device);
                 assert!(!address.is_empty());
-                feeder.expect("the feeder was restarted first").abort();
+                feeder.expect("the broker started first").abort();
                 return (run, heard, id);
             }
-            other => panic!("{other:?}"),
+            InstallUpdate::Ask { ask, .. } => panic!("{ask:?}"),
+            InstallUpdate::Ended { end } => panic!("the run ended: {end:?}"),
         }
     }
 }
@@ -825,7 +810,7 @@ fn another_feeder_is_served_after_the_owner_said_no_to_the_first() {
         let fixture = Fixture::new(Provisioning::Consumer);
         let broker = "127.41.8.30";
 
-        let spec = dns_spec(&fixture, broker);
+        let spec = fixture.spec(InstallStart::FrameTaken, broker);
         let (run, mut heard, id) =
             to_the_feeder_check(&fixture, spec, broker, "AF_FIRST_FEEDER").await;
         run.answer(id, InstallAnswer::Yes { yes: false });
@@ -835,7 +820,7 @@ fn another_feeder_is_served_after_the_owner_said_no_to_the_first() {
         assert_eq!(case, StopCase::NotYourFeeder);
         assert_eq!(resume, Resume::FromStart);
 
-        let mut spec = dns_spec(&fixture, broker);
+        let mut spec = fixture.spec(InstallStart::FrameTaken, broker);
         spec.forget_enrollment = true;
         let (run, mut heard, id) =
             to_the_feeder_check(&fixture, spec, broker, "AF_OTHER_FEEDER").await;
@@ -917,7 +902,7 @@ fn a_taken_port_is_not_no_feeder() {
         let broker = "127.41.8.31";
         let _taken = tokio::net::TcpListener::bind((broker, 1883)).await.unwrap();
 
-        let (run, mut heard) = started(&fixture, dns_spec(&fixture, broker));
+        let (run, mut heard) = started(&fixture, fixture.spec(InstallStart::FrameTaken, broker));
         loop {
             match next(&mut heard).await {
                 InstallUpdate::Ask { id, .. } => run.answer(id, InstallAnswer::Done),
@@ -944,7 +929,7 @@ fn a_run_refuses_an_image_its_pin_does_not_name() {
         let run = Run::new(Some(other));
         let (updates, mut heard) = mpsc::unbounded_channel();
         run.start(
-            Some(dns_spec(&fixture, "127.41.8.32")),
+            Some(fixture.spec(InstallStart::Reset, "127.41.8.32")),
             Keypair::from_secret([0x51; 32]),
             move |update| updates.send(update).is_ok(),
         );
@@ -1010,7 +995,7 @@ fn a_run_that_cannot_start_says_why_and_touches_nothing() {
         // A request with no Wi-Fi to give the replacement could not be taken
         // back, and the replacement would have nothing to join.
         let fixture = Fixture::new(Provisioning::Consumer);
-        let mut spec = dns_spec(&fixture, "127.41.8.30");
+        let mut spec = fixture.spec(InstallStart::Reset, "127.41.8.30");
         spec.home = None;
         let data = Path::new(&spec.data_dir).to_path_buf();
         let (_run, mut heard) = started(&fixture, spec);
@@ -1033,7 +1018,7 @@ fn a_run_that_cannot_start_says_why_and_touches_nothing() {
         assert_eq!(resume, Resume::FromBank0);
 
         // A phone off Wi-Fi, and a Wi-Fi no feeder could be given.
-        let spec = dns_spec(&fixture, "");
+        let spec = fixture.spec(InstallStart::Reset, "");
         let (_run, mut heard) = started(&fixture, spec);
         let InstallEnd::Stopped { case, resume, .. } = ended(&mut heard).await else {
             panic!("a phone with no address started");
@@ -1041,7 +1026,7 @@ fn a_run_that_cannot_start_says_why_and_touches_nothing() {
         assert_eq!(case, StopCase::PhoneOffWifi);
         assert_eq!(resume, Resume::FromStart);
 
-        let mut spec = dns_spec(&fixture, "127.41.8.30");
+        let mut spec = fixture.spec(InstallStart::Reset, "127.41.8.30");
         spec.home = Some(WifiCredentials {
             ssid: String::new(),
             passphrase: "correcthorse".into(),

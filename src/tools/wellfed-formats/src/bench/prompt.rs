@@ -26,7 +26,6 @@
 //! different things, and neither may stand in for the other.
 
 use std::fmt;
-use std::net::IpAddr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use wellfed_session::setup_code::{Button, PRESSES};
@@ -36,11 +35,8 @@ use wellfed_session::setup_code::{Button, PRESSES};
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Prompt {
-    /// The DNS route: the owner's resolver is to answer stock's broker
-    /// `name` with `broker`, this computer.
-    SetOverride { name: String, broker: IpAddr },
-    /// Stock looks its broker name up again only when it restarts; the
-    /// broker is already listening.
+    /// Stock connected but its reports were lost: a restart sends them again.
+    /// The broker is already listening.
     RestartFeeder,
     /// Trust on first use admitted `device`, connecting from `address`:
     /// the owner checks the label and the router's client list before
@@ -158,8 +154,7 @@ impl Prompt {
     pub const fn expects(&self) -> Expects {
         match self {
             Self::RecognizeFeeder { .. } => Expects::YesNo,
-            Self::SetOverride { .. }
-            | Self::RestartFeeder
+            Self::RestartFeeder
             | Self::SetupMode
             | Self::JoinBack
             | Self::OpenRecoveryWindow
@@ -172,7 +167,6 @@ impl Prompt {
     /// a log line or a refusal, where [`Self::text`] is too long.
     pub const fn name(&self) -> &'static str {
         match self {
-            Self::SetOverride { .. } => "set-override",
             Self::RestartFeeder => "restart-feeder",
             Self::RecognizeFeeder { .. } => "recognize-feeder",
             Self::SetupMode => "setup-mode",
@@ -195,16 +189,7 @@ impl Prompt {
     /// "Then press Enter." or "[y/N]", a page its buttons.
     pub fn text(&self) -> String {
         match self {
-            Self::SetOverride { name, broker } => format!(
-                "Point stock's broker name at this computer. In your router's DNS settings (or a \
-                 resolver you run, if your router hands that one out), make {name} resolve to \
-                 {broker}. Only that name changes, and nothing is written to stock. Its meals do \
-                 not come along: set them up again in Wellfed afterwards. Remove the override \
-                 once the install is done: a feeder rolled back to stock would otherwise keep looking for this \
-                 computer. While it stands, any other device that uses the same name reaches \
-                 this computer too, and loses its connection to the vendor. Set the override."
-            ),
-            Self::RestartFeeder => "Restart the feeder so stock looks the name up again: unplug \
+            Self::RestartFeeder => "Restart the feeder so stock reports itself again: unplug \
                                     its adapter for about 10 s (take its batteries out too, if \
                                     fitted) and plug it back in."
                 .to_string(),
@@ -277,12 +262,8 @@ mod tests {
         Button::Lock,
     ];
 
-    fn every() -> [Prompt; 8] {
+    fn every() -> [Prompt; 7] {
         [
-            Prompt::SetOverride {
-                name: "broker.example.net".into(),
-                broker: "192.168.1.20".parse().unwrap(),
-            },
             Prompt::RestartFeeder,
             Prompt::RecognizeFeeder {
                 device: "AF_TEST".into(),
@@ -304,10 +285,7 @@ mod tests {
     #[test]
     fn a_prompt_is_one_tagged_json_object_and_round_trips() {
         let line = serde_json::to_string(&every()[0]).unwrap();
-        assert_eq!(
-            line,
-            r#"{"kind":"set-override","name":"broker.example.net","broker":"192.168.1.20"}"#
-        );
+        assert_eq!(line, r#"{"kind":"restart-feeder"}"#);
         assert_eq!(
             serde_json::to_string(&Prompt::OpenRecoveryWindow).unwrap(),
             r#"{"kind":"open-recovery-window"}"#
@@ -395,7 +373,7 @@ mod tests {
         }
         assert_eq!(Prompt::RestartFeeder.expects(), Expects::Done);
         assert_eq!(
-            every()[2].expects(),
+            every()[1].expects(),
             Expects::YesNo,
             "recognizing the feeder is a question"
         );

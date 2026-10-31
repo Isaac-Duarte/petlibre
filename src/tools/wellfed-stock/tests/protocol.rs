@@ -5,9 +5,8 @@
 
 mod common;
 
-use chrono::{TimeDelta, Utc};
+use chrono::Utc;
 use serde_json::json;
-use wellfed_stock::clock::Policy;
 use wellfed_stock::protocol;
 use wellfed_stock::protocol::Channel;
 
@@ -37,7 +36,7 @@ fn acknowledgements_preserve_event_id_and_step_without_sending_a_feed() {
     )
     .unwrap();
 
-    let reply = protocol::reply(&config, channel, &msg, Utc::now(), Policy::Bounded).unwrap();
+    let reply = protocol::reply(&config, channel, &msg, Utc::now()).unwrap();
     assert_eq!(reply.topic, config.topic("event/sub"));
     assert_eq!(reply.payload["msgId"], "event42");
     assert_eq!(reply.payload["execStep"], "GRAIN_END");
@@ -54,7 +53,7 @@ fn stock_ota_report_topic_is_parsed_without_sending_an_acknowledgement_or_comman
         let (channel, msg) = protocol::parse(&config, &config.topic("ota/post"), &payload).unwrap();
         assert_eq!(channel, Channel::Ota);
         assert_eq!(msg.cmd, cmd);
-        assert!(protocol::reply(&config, channel, &msg, Utc::now(), Policy::Bounded).is_none());
+        assert!(protocol::reply(&config, channel, &msg, Utc::now()).is_none());
         assert!(protocol::parse(&config, "dl/PLAF103/ANOTHER/device/ota/post", &payload).is_err());
     }
 }
@@ -70,7 +69,7 @@ fn configuration_reply_uses_its_own_channel_without_an_automatic_response() {
     .unwrap();
 
     assert_eq!(channel, Channel::Config);
-    assert!(protocol::reply(&config, channel, &msg, Utc::now(), Policy::Bounded).is_none());
+    assert!(protocol::reply(&config, channel, &msg, Utc::now()).is_none());
     assert!(
         protocol::parse(
             &config,
@@ -92,8 +91,7 @@ fn plan_requests_return_imported_snapshot_and_clock_changes_are_held_for_nonempt
     )
     .unwrap();
 
-    let reply =
-        protocol::reply(&config, Channel::Event, &msg, Utc::now(), Policy::Bounded).unwrap();
+    let reply = protocol::reply(&config, Channel::Event, &msg, Utc::now()).unwrap();
     assert_eq!(reply.payload["plans"], json!(config.plans.clone().unwrap()));
 
     let (_, msg) = protocol::parse(
@@ -103,62 +101,16 @@ fn plan_requests_return_imported_snapshot_and_clock_changes_are_held_for_nonempt
     )
     .unwrap();
     assert_eq!(
-        protocol::reply(&config, Channel::Ntp, &msg, Utc::now(), Policy::Bounded)
+        protocol::reply(&config, Channel::Ntp, &msg, Utc::now())
             .unwrap()
             .payload["calibrationTag"],
         false
     );
 }
 
-/// With no captured table, stock's `NTP` request dates itself with its own
-/// clock: one within ten minutes of ours is set, one days behind is held
-/// unless the owner passed `--calibrate-clock`. Only the request's own `ts`
-/// counts: an earlier in-bound message does not vouch for a request without
-/// one, which may follow a restart.
-#[test]
-fn an_installer_sets_only_a_close_clock_unless_the_owner_asks() {
-    let mut config = common::config();
-    config.plans = None;
-    let now = Utc::now();
-    let send = |policy: Policy, channel: &str, body: serde_json::Value| {
-        let (channel, msg) = protocol::parse(
-            &config,
-            &config.topic(&format!("{channel}/post")),
-            &serde_json::to_vec(&body).unwrap(),
-        )
-        .unwrap();
-        protocol::reply(&config, channel, &msg, now, policy)
-    };
-    let ntp = |policy: Policy, body: serde_json::Value| {
-        send(policy, "ntp", body).unwrap().payload["calibrationTag"].clone()
-    };
-    let dated = |at: chrono::DateTime<Utc>| json!({"cmd": "NTP", "ts": at.timestamp_millis()});
-
-    assert_eq!(
-        ntp(Policy::Bounded, dated(now - TimeDelta::minutes(9))),
-        true
-    );
-    assert_eq!(
-        ntp(Policy::Bounded, dated(now + TimeDelta::minutes(9))),
-        true
-    );
-    assert_eq!(ntp(Policy::Bounded, dated(now - TimeDelta::days(2))), false);
-    assert_eq!(ntp(Policy::Always, dated(now - TimeDelta::days(2))), true);
-
-    for undated in [json!({"cmd": "NTP"}), json!({"cmd": "NTP", "ts": 0})] {
-        send(
-            Policy::Bounded,
-            "heart",
-            json!({"cmd": "HEARTBEAT", "ts": now.timestamp_millis()}),
-        );
-        assert_eq!(ntp(Policy::Bounded, undated), false);
-    }
-}
-
 /// Stock erases and rewrites its plan table on any message with a `plans`
 /// key. With no captured snapshot (an installer's or enrolled config), the
-/// plan request goes unanswered, no reply carries the key, and the clock is
-/// not calibrated; a captured snapshot, empty or not, is answered as
+/// plan request goes unanswered and no reply carries the key; a captured snapshot, empty or not, is answered as
 /// captured.
 #[test]
 fn plans_are_sent_only_as_captured() {
@@ -173,7 +125,7 @@ fn plans_are_sent_only_as_captured() {
         )
         .unwrap();
         assert_eq!(parsed, channel);
-        protocol::reply(config, channel, &msg, Utc::now(), Policy::Bounded)
+        protocol::reply(config, channel, &msg, Utc::now())
     };
 
     assert!(
@@ -196,9 +148,6 @@ fn plans_are_sent_only_as_captured() {
         let reply = ask(&config, channel, topic, cmd).expect("acknowledged");
         assert!(reply.payload.get("plans").is_none(), "{cmd}");
     }
-    let ntp = ask(&config, Channel::Ntp, "ntp/post", "NTP").unwrap();
-    assert_eq!(ntp.payload["calibrationTag"], false);
-
     for captured in [vec![], vec![json!({"id": "p"})]] {
         config.plans = Some(captured.clone());
         let reply = ask(
@@ -240,7 +189,7 @@ fn a_seeded_table_replays_as_written_and_removing_it_leaves_stock_s_alone() {
     let ask = |config: &wellfed_stock::config::Config, topic: &str, cmd: &str| {
         let body = serde_json::to_vec(&json!({"cmd": cmd, "msgId": "m", "ts": 0})).unwrap();
         let (channel, msg) = protocol::parse(config, &config.topic(topic), &body).unwrap();
-        protocol::reply(config, channel, &msg, Utc::now(), Policy::Bounded)
+        protocol::reply(config, channel, &msg, Utc::now())
     };
     let reply = ask(&config, "event/post", "GET_FEEDING_PLAN_EVENT").unwrap();
     assert_eq!(reply.payload["plans"], seed);

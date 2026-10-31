@@ -225,7 +225,7 @@ text: string, expects: Expects, };
 /**
  * One question the installer stops at until it is answered.
  */
-export type Prompt = { "kind": "set-override", name: string, broker: string, } | { "kind": "restart-feeder" } | { "kind": "recognize-feeder", device: string, address: string, } | { "kind": "setup-mode" } | { "kind": "join-back" } | { "kind": "open-recovery-window" } | { "kind": "key-setup-code", presses: Array<"reset" | "mic" | "dispense" | "lock">, } | { "kind": "press-dispense", purpose: DispensePurpose, };
+export type Prompt = { "kind": "restart-feeder" } | { "kind": "recognize-feeder", device: string, address: string, } | { "kind": "setup-mode" } | { "kind": "join-back" } | { "kind": "open-recovery-window" } | { "kind": "key-setup-code", presses: Array<"reset" | "mic" | "dispense" | "lock">, } | { "kind": "press-dispense", purpose: DispensePurpose, };
 
 /**
  * What a Dispense press asked for confirms.

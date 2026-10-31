@@ -9,7 +9,7 @@ use wellfed_relay::UART;
 
 use super::*;
 
-/// The words of an install job on the DNS route.
+/// The words of an install job, whose stock already reaches the broker.
 const INSTALL: &[&str] = &[
     "install",
     "--review",
@@ -18,8 +18,6 @@ const INSTALL: &[&str] = &[
     "private/m.json",
     "--stock-config",
     "private/installer.json",
-    "--broker-name",
-    "broker.example.net",
 ];
 
 /// Write `script` as the checkout's `name`, executable.
@@ -181,9 +179,7 @@ async fn an_install_restarts_the_feeder_itself_and_asks_the_rest_through_the_sta
     }
     let args = read(&checkout, "args");
     assert!(
-        args.starts_with("install --prompts=lines --review=")
-            && args.contains("--broker-name=broker.example.net")
-            && !args.contains("restart"),
+        args.starts_with("install --prompts=lines --review=") && !args.contains("restart"),
         "{args}"
     );
     assert_eq!(
@@ -278,12 +274,7 @@ echo "Error: Stopped at pairing: the window closed" >&2
 exit 1
 "#,
     );
-    let words: Vec<&str> = INSTALL
-        .iter()
-        .copied()
-        .filter(|word| !word.starts_with("broker") && *word != "--broker-name")
-        .chain(["--from-bank0"])
-        .collect();
+    let words: Vec<&str> = INSTALL.iter().copied().chain(["--from-bank0"]).collect();
     // The stopped installer before it marked bank 0; this one starts
     // from bank 0 and leaves that entry as it was.
     let before = server.state().await.banks.banks[&Bank::Zero].clone();
@@ -367,8 +358,6 @@ const UNATTENDED: &[&str] = &[
     "private/ota-key.json",
     "--stock-config",
     "private/installer.json",
-    "--broker-name",
-    "broker.example.net",
     "--home-network",
     "private/hotspot.json",
     "--expect-device",

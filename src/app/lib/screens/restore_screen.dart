@@ -344,22 +344,10 @@ class _Done extends StatelessWidget {
     title: 'The original firmware is going back',
     body:
         '${flow.feederName} is restarting on vendor ${flow.version ?? ''}. '
-        "Wellfed can't talk to it any more. What it does next depends on how "
-        'you installed Wellfed.',
-    content: const [
-      ReasonList([
-        (
-          'If you installed by holding Reset',
-          'It still looks for this phone, and keeps trying forever. Hold '
-              "Reset for about 5 seconds, then set it up in the vendor's app.",
-        ),
-        (
-          'If you installed through your router',
-          "It goes back to the vendor's cloud once the DNS record is gone. "
-              'Remove the record from your router.',
-        ),
-      ]),
-    ],
+        "Wellfed can't talk to it any more. It still looks for this phone, and "
+        'keeps trying forever. Hold Reset for about 5 seconds, then set it up '
+        "in the vendor's app.",
+    content: const [],
     actions: [_Close()],
   );
 }

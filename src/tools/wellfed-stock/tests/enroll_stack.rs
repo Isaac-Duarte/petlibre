@@ -215,10 +215,7 @@ async fn the_first_stock_feeder_enrolls_and_is_then_the_only_one() {
 /// server has subscribed, so that single report reaches the status.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_feeder_s_first_report_reaches_an_in_process_server() {
-    use wellfed_stock::{
-        clock,
-        server::{Api, Bind, Options, OtaTrial, Server},
-    };
+    use wellfed_stock::server::{Api, Bind, Options, OtaTrial, Server};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
@@ -229,7 +226,6 @@ async fn a_feeder_s_first_report_reaches_an_in_process_server() {
         Options {
             trial: OtaTrial::Disabled,
             enroll: Some(Duration::from_secs(60)),
-            clock: clock::Policy::Bounded,
             api: Api::Off,
             bind: Bind::Configured,
         },
@@ -298,7 +294,6 @@ async fn a_feeder_s_first_report_reaches_an_in_process_server() {
 async fn an_in_process_server_refuses_the_trial_on_an_unreviewable_build() {
     use wellfed_stock::{
         build_info::{ALLOW_UNREVIEWED_ENV, BUILD},
-        clock,
         server::{Api, Bind, Options, OtaTrial, Server},
     };
     if BUILD.reviewable() || std::env::var_os(ALLOW_UNREVIEWED_ENV).is_some() {
@@ -312,7 +307,6 @@ async fn an_in_process_server_refuses_the_trial_on_an_unreviewable_build() {
     let options = Options {
         trial: OtaTrial::Enabled,
         enroll: Some(Duration::from_secs(60)),
-        clock: clock::Policy::Bounded,
         api: Api::Off,
         bind: Bind::Configured,
     };
@@ -330,10 +324,7 @@ async fn an_in_process_server_refuses_the_trial_on_an_unreviewable_build() {
 /// address, so that route's broker answers on every address.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_broker_bound_to_any_address_answers_beyond_the_configured_one() {
-    use wellfed_stock::{
-        clock,
-        server::{Api, Bind, Options, OtaTrial, Server},
-    };
+    use wellfed_stock::server::{Api, Bind, Options, OtaTrial, Server};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
@@ -344,7 +335,6 @@ async fn a_broker_bound_to_any_address_answers_beyond_the_configured_one() {
         Options {
             trial: OtaTrial::Disabled,
             enroll: Some(Duration::from_secs(60)),
-            clock: clock::Policy::Bounded,
             api: Api::Off,
             bind: Bind::Any,
         },

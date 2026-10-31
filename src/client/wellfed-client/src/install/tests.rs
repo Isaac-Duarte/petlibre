@@ -243,44 +243,10 @@ fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
     assert_eq!(install.step(), Step::Done);
 }
 
-fn dns() -> DnsOverride {
-    DnsOverride::new("broker.example.net", "10.42.103.1:1883".parse().unwrap()).unwrap()
-}
-
-/// DNS first: the owner points stock's broker name at the installer and
-/// restarts the feeder; no frame, no Reset hold, and the run then waits
-/// for stock at the broker like any other.
-#[test]
-fn the_dns_route_sends_no_frame_and_waits_for_stock() {
-    let mut install = Install::new(Provision::Dns(dns()), BUILD, bench()).unwrap();
-    assert_eq!(install.phase(), Phase::Provision);
-    assert_eq!(install.step(), Step::PointDns(dns()));
-
-    // Nothing moves it on but the owner's word.
-    install.stock(&ready()).unwrap();
-    install.frame_sent();
-    assert_eq!(install.step(), Step::PointDns(dns()));
-
-    install.dns_pointed();
-    assert_eq!(install.step(), Step::AwaitStock);
-    assert_eq!(
-        install.stock(&StockView {
-            online: false,
-            ..ready()
-        }),
-        Err(StockNotReady::Offline)
-    );
-    install.stock(&ready()).unwrap();
-    assert_eq!(install.step(), Step::ConfirmFeeder(enrolled()));
-}
-
-/// Stock never reaching the broker (the override not in place, or a
-/// feeder that did not restart) ends the run at provisioning, with nothing
-/// sent to stock.
+/// Stock never reaching the broker ends the run with nothing sent to it.
 #[test]
 fn stock_that_never_arrives_ends_the_run_with_nothing_sent() {
-    let mut install = Install::new(Provision::Dns(dns()), BUILD, bench()).unwrap();
-    install.dns_pointed();
+    let mut install = fresh();
     install.gave_up();
     assert_eq!(
         install.step(),

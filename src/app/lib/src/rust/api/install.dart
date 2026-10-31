@@ -14,7 +14,7 @@ import 'setup.dart';
 import 'store.dart';
 part 'install.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// The image unpacked in `dir`, checked against this build's pin and against
 /// its own review.
@@ -24,12 +24,6 @@ ImageCheck checkImage({required String dir}) =>
 /// Stock's install is held to a build whose sources can be reviewed: a
 /// clean commit of the crates that decide and send it.
 BuildCheck checkBuild() => RustLib.instance.api.crateApiInstallCheckBuild();
-
-/// Look stock's broker `name` up from this phone and say what it found
-/// against `phone_ip`. Advice only: this phone may ask another resolver
-/// than the feeder does, so a run waits for stock whatever it says.
-Future<DnsResult> checkDns({required String name, required String phoneIp}) =>
-    RustLib.instance.api.crateApiInstallCheckDns(name: name, phoneIp: phoneIp);
 
 /// What an earlier run left, read from its records alone.
 PendingInstall pendingInstall({required String dataDir}) =>
@@ -94,28 +88,6 @@ sealed class BuildCheck with _$BuildCheck {
 }
 
 @freezed
-sealed class DnsResult with _$DnsResult {
-  const DnsResult._();
-
-  /// It answers with this phone alone.
-  const factory DnsResult.points() = DnsResult_Points;
-
-  /// It answers with this phone and `others`: stock may take any of them.
-  const factory DnsResult.mixed({required List<String> others}) =
-      DnsResult_Mixed;
-
-  /// It answers with `others` only.
-  const factory DnsResult.elsewhere({required List<String> others}) =
-      DnsResult_Elsewhere;
-
-  /// It has no answer for the name.
-  const factory DnsResult.unresolved() = DnsResult_Unresolved;
-
-  /// The name cannot be a broker's name.
-  const factory DnsResult.badName() = DnsResult_BadName;
-}
-
-@freezed
 sealed class ImageCheck with _$ImageCheck {
   const ImageCheck._();
 
@@ -169,12 +141,6 @@ sealed class InstallAnswer with _$InstallAnswer {
 @freezed
 sealed class InstallAsk with _$InstallAsk {
   const InstallAsk._();
-
-  /// Answered done once the owner's resolver answers `name` with `broker`.
-  const factory InstallAsk.setOverride({
-    required String name,
-    required String broker,
-  }) = InstallAsk_SetOverride;
 
   /// Answered done once the owner was told: the broker already listens.
   const factory InstallAsk.restartFeeder() = InstallAsk_RestartFeeder;
@@ -232,9 +198,6 @@ sealed class InstallEnd with _$InstallEnd {
 @freezed
 sealed class InstallEvent with _$InstallEvent {
   const InstallEvent._();
-
-  const factory InstallEvent.dnsChecked({required DnsResult result}) =
-      InstallEvent_DnsChecked;
 
   /// The broker listens, with its enrollment window open.
   const factory InstallEvent.stockServerStarted() =
@@ -374,11 +337,6 @@ class InstallSpec {
   /// and the backups.
   final String dataDir;
 
-  /// Have the stock server set stock's clock even when its own reading is
-  /// unknown or far off. Stock may then run meals that came due in the
-  /// jump, so the owner chooses this.
-  final bool calibrateClock;
-
   /// Forget the feeder the broker trusted before: the owner said it was
   /// not theirs, or two answered.
   final bool forgetEnrollment;
@@ -399,7 +357,6 @@ class InstallSpec {
     required this.storePath,
     required this.imageDir,
     required this.dataDir,
-    required this.calibrateClock,
     required this.forgetEnrollment,
     required this.setupAgain,
   });
@@ -416,7 +373,6 @@ class InstallSpec {
       storePath.hashCode ^
       imageDir.hashCode ^
       dataDir.hashCode ^
-      calibrateClock.hashCode ^
       forgetEnrollment.hashCode ^
       setupAgain.hashCode;
 
@@ -435,29 +391,23 @@ class InstallSpec {
           storePath == other.storePath &&
           imageDir == other.imageDir &&
           dataDir == other.dataDir &&
-          calibrateClock == other.calibrateClock &&
           forgetEnrollment == other.forgetEnrollment &&
           setupAgain == other.setupAgain;
 }
 
-@freezed
-sealed class InstallStart with _$InstallStart {
-  const InstallStart._();
-
-  /// The owner's resolver answers stock's broker `name` with this phone.
-  const factory InstallStart.dns({required String name}) = InstallStart_Dns;
-
+/// How the feeder finds this phone.
+enum InstallStart {
   /// The owner reset the feeder, which opened its setup network: this phone
   /// joins it and sends `home` and its own address there, once.
-  const factory InstallStart.reset() = InstallStart_Reset;
+  reset,
 
   /// A frame from an earlier run reached this phone's broker, so stock
   /// already looks for it here and has no setup network left to join.
-  const factory InstallStart.frameTaken() = InstallStart_FrameTaken;
+  frameTaken,
 
   /// The replacement is already on bank 0 from an earlier run: start at
   /// pairing, and ask stock nothing.
-  const factory InstallStart.bank0() = InstallStart_Bank0;
+  bank0,
 }
 
 @freezed

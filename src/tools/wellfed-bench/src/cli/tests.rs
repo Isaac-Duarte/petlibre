@@ -73,14 +73,9 @@ fn install_takes_the_bench_route_s_flags_and_answer_its_three_words() {
         "private/m.json",
         "--stock-config",
         "private/installer.json",
-        "--broker-name",
-        "broker.example.net",
     ])
     .unwrap();
-    let JobCommand::Install(args) = job(&cli) else {
-        panic!("not install")
-    };
-    assert_eq!(args.broker_name.as_deref(), Some("broker.example.net"));
+    assert!(matches!(job(&cli), JobCommand::Install(_)));
     assert_eq!(job(&cli).describe(), "install");
     // The frame route reads a passphrase at a terminal: no job takes it.
     assert!(

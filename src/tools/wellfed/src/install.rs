@@ -32,16 +32,14 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use tokio::signal::unix::{SignalKind, signal};
-use wellfed_client::install::{
-    DnsOverride, InstallError, Provision, SetupFrame, StockBackup, manifest_version,
-};
+use wellfed_client::install::{InstallError, Provision, SetupFrame, StockBackup, manifest_version};
 use wellfed_client::setup::Credentials;
 use wellfed_formats::bench::lease::Lease;
 use wellfed_formats::credentials::{KeyScope, WifiCredential};
 use wellfed_formats::manifest::Provisioning;
 use wellfed_formats::stock::ServerConfig;
 use wellfed_install::{
-    Api, ClockPolicy, Mdns, Plan, Platform, Review, Signer, Start, StockOptions, Stop, build_info,
+    Api, Mdns, Plan, Platform, Review, Signer, Start, StockOptions, Stop, build_info,
 };
 use wellfed_signing::{Frozen, Key, signed_so_far};
 
@@ -103,17 +101,9 @@ pub(crate) struct InstallArgs {
     /// The owner's data directory for stock backups, one per feeder.
     #[arg(long, default_value = crate::backup::BACKUPS)]
     backups: PathBuf,
-    /// Stock's broker name (the vendor's, which Wellfed does not ship):
-    /// the owner's resolver is to answer it with this computer, and the
-    /// restarted feeder connects here with nothing written to it. The
-    /// DNS-first route.
-    #[arg(long, conflicts_with_all = ["ssid", "from_bank0"])]
-    broker_name: Option<String>,
-    /// The fallback where the router cannot override a name: the owner
-    /// holds Reset, and the setup frame points
-    /// stock at this network (passphrase from standard input) and the
-    /// installer's broker. Without it or --broker-name, stock already
-    /// connects to the installer's broker.
+    /// The owner holds Reset, and the setup frame points stock at this
+    /// network (passphrase from standard input) and the installer's broker.
+    /// Without it, stock already connects to the installer's broker.
     #[arg(long)]
     ssid: Option<String>,
     /// The numeric account ID the frame carries; stock requires nonzero
@@ -145,12 +135,6 @@ pub(crate) struct InstallArgs {
     /// The replacement's address; where stock connected from otherwise.
     #[arg(long)]
     address: Option<String>,
-    /// Have the stock server set stock's clock even when its own reading is
-    /// unknown or more than 10 minutes off. Stock may refuse the install
-    /// with its clock unset, but once set it may run meals that came due in
-    /// the jump.
-    #[arg(long)]
-    calibrate_clock: bool,
     /// How the run asks the person at the feeder: at this terminal, or as
     /// JSON lines on standard output and input for the bench server, which
     /// runs it as a job. The frame route (--ssid) asks at a terminal only,
@@ -164,7 +148,7 @@ pub(crate) struct InstallArgs {
 enum PromptsRefused {
     #[error(
         "--ssid reads the network's passphrase at a terminal, so it does not run with \
-         --prompts lines; nothing was started. Use --broker-name on the bench"
+         --prompts lines; nothing was started. Leave it out on the bench, whose stock already reaches the broker"
     )]
     Frame,
     #[error(
@@ -312,11 +296,6 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         report: Printer,
     };
     // After the Reset hold no plan is left to come due in the jump.
-    let clock = if args.calibrate_clock || args.ssid.is_some() {
-        ClockPolicy::Always
-    } else {
-        ClockPolicy::Bounded
-    };
     let plan = Plan {
         review,
         start,
@@ -331,7 +310,6 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         stock: StockOptions {
             config: config_path,
             enroll: Duration::from_secs(args.enroll_minutes * 60),
-            clock,
             // The bench's page reads the stock server's status.
             api: Api::Loopback,
             bind: wellfed_install::Bind::Configured,
@@ -352,7 +330,7 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
     // server's broker is never left on the MQTT port.
     wellfed_install::run(plan, platform, signalled()?)
         .await
-        .map_err(|error| explain(error, args.calibrate_clock))
+        .map_err(explain)
 }
 
 /// Resolves on SIGTERM or SIGINT. Once seen, the handlers stay installed but
@@ -381,17 +359,10 @@ enum Route {
 
 /// The run's error in this command's words: the flags that resume it, or
 /// that answer a refusal, where the run names none.
-fn explain(error: wellfed_install::Error, calibrate_clock: bool) -> anyhow::Error {
+fn explain(error: wellfed_install::Error) -> anyhow::Error {
     use wellfed_install::Error;
 
     match error {
-        Error::Steps(InstallError::StockClockUnset) if !calibrate_clock => {
-            anyhow::Error::from(error).context(
-                "If the stock server's log above shows its NTP reply held stock's clock, run \
-                 again with --calibrate-clock to have it set, accepting that stock may run \
-                 meals that came due while its clock jumps",
-            )
-        }
         Error::Steps(
             InstallError::UpdateKey(_)
             | InstallError::UpdateKeyUncertain
@@ -567,19 +538,13 @@ fn home_network(path: &Path) -> Result<(String, String)> {
     Ok((ssid, password))
 }
 
-/// How stock reaches the installer's broker: a DNS override of its
-/// broker name (`--broker-name`), the setup frame after the Reset hold
-/// (`--ssid`: the owner's network and the installer's broker), or already.
+/// How stock reaches the installer's broker: the setup frame after the Reset
+/// hold (`--ssid`: the owner's network and the installer's broker), or already.
 fn provision(
     args: &InstallArgs,
     config: &ServerConfig,
     passphrase: Option<String>,
 ) -> Result<Provision> {
-    if let Some(name) = &args.broker_name {
-        return Ok(Provision::Dns(
-            DnsOverride::new(name, config.mqtt_listen).context("--broker-name")?,
-        ));
-    }
     let Some(ssid) = &args.ssid else {
         return Ok(Provision::Done);
     };
@@ -631,8 +596,6 @@ mod tests {
             "missing.bin",
             "--stock-config",
             config.to_str().unwrap(),
-            "--broker-name",
-            "broker.example.net",
         ]);
 
         let error = run(line.args).await.unwrap_err();
@@ -860,14 +823,11 @@ mod tests {
     fn the_run_s_refusals_name_this_command_s_flags() {
         use wellfed_install::Error;
 
-        let error = explain(
-            Error::OtherDevice {
-                expected: "AF_OTHER".into(),
-                enrolled: "AF_FEEDER".into(),
-                address: "10.42.103.172".into(),
-            },
-            false,
-        );
+        let error = explain(Error::OtherDevice {
+            expected: "AF_OTHER".into(),
+            enrolled: "AF_FEEDER".into(),
+            address: "10.42.103.172".into(),
+        });
         match error.downcast_ref::<Refused>() {
             Some(Refused::OtherDevice {
                 expected,
@@ -881,16 +841,8 @@ mod tests {
         }
         assert!(error.to_string().contains("--expect-device is AF_OTHER"));
 
-        let error = explain(Error::NotAnswering { feeder: [0xab; 32] }, false);
+        let error = explain(Error::NotAnswering { feeder: [0xab; 32] });
         assert!(error.to_string().contains("feeder abababababababab"));
         assert!(error.to_string().contains("pass --address <ip> to resume"));
-
-        let held = explain(Error::Steps(InstallError::StockClockUnset), false);
-        assert!(
-            format!("{held:#}").contains("--calibrate-clock"),
-            "{held:#}"
-        );
-        let calibrated = explain(Error::Steps(InstallError::StockClockUnset), true);
-        assert!(!format!("{calibrated:#}").contains("--calibrate-clock"));
     }
 }

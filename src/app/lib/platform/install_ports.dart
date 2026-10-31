@@ -70,7 +70,6 @@ abstract interface class InstallPorts {
   /// Wi-Fi, or `null` if it does not come back in time.
   Future<String?> leaveFeederNetwork();
 
-  Future<DnsResult> checkDns(String name, String phoneIp);
 
   /// Ask Android for what the install needs; whether Bluetooth was allowed.
   /// `bluetooth` is `false` for a bench image, which pairs over the LAN.
@@ -177,10 +176,6 @@ class AppInstallPorts implements InstallPorts {
   @override
   Future<String?> leaveFeederNetwork() =>
       _wifi.invokeMethod<String>('leaveFeeder');
-
-  @override
-  Future<DnsResult> checkDns(String name, String phoneIp) =>
-      rust.checkDns(name: name, phoneIp: phoneIp);
 
   @override
   Future<bool> askPermissions({required bool bluetooth}) async {

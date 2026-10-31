@@ -5,10 +5,9 @@
 //! the same tag, so `remove` deletes them together.
 //!
 //! The broker redirect is one rule in its own chain, and it can be left out
-//! ([`Redirect::Off`]): the feeder then reaches the broker only by the name
-//! it resolves, as a consumer's DNS-first install has it, while its WAN stays
-//! blocked. A failed DNS override then fails closed: stock cannot reach the
-//! vendor's cloud through a public resolver's answer.
+//! ([`Redirect::Off`]): the feeder then reaches the broker only where a setup
+//! frame named it, as a consumer's install has it, while its WAN stays
+//! blocked, so stock cannot reach the vendor's cloud meanwhile.
 //!
 //! Linux gateway only, run as root through `nft`. `rules` renders the
 //! transaction for preview; `apply` refuses unless the broker is listening and

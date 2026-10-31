@@ -79,7 +79,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 1228228035;
+  int get rustContentHash => 1553127826;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -235,11 +235,6 @@ abstract class RustLibApi extends BaseApi {
   BackupCheck crateApiRestoreCheckBackup({required String path});
 
   BuildCheck crateApiInstallCheckBuild();
-
-  Future<DnsResult> crateApiInstallCheckDns({
-    required String name,
-    required String phoneIp,
-  });
 
   ImageCheck crateApiInstallCheckImage({required String dir});
 
@@ -1644,47 +1639,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "check_build", argNames: []);
 
   @override
-  Future<DnsResult> crateApiInstallCheckDns({
-    required String name,
-    required String phoneIp,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_String(name, serializer);
-          sse_encode_String(phoneIp, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 42,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_dns_result,
-          decodeErrorData: null,
-        ),
-        constMeta: kCrateApiInstallCheckDnsConstMeta,
-        argValues: [name, phoneIp],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiInstallCheckDnsConstMeta => const TaskConstMeta(
-    debugName: "check_dns",
-    argNames: ["name", "phoneIp"],
-  );
-
-  @override
   ImageCheck crateApiInstallCheckImage({required String dir}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(dir, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 43)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 42)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_image_check,
@@ -1707,7 +1668,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(identity, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 44)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 43)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1734,7 +1695,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(dataDir, serializer);
           sse_encode_list_prim_u_8_loose(identity, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 45)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 44)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1760,7 +1721,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(hex, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 46)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 45)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -1783,7 +1744,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(identity, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 47)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 46)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1808,7 +1769,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 48,
+            funcId: 47,
             port: port_,
           );
         },
@@ -1833,7 +1794,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(text, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 49)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 48)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_list_prim_u_8_strict,
@@ -1870,7 +1831,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 50,
+            funcId: 49,
             port: port_,
           );
         },
@@ -1901,7 +1862,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(dataDir, serializer);
           sse_encode_list_prim_u_8_loose(identity, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 51)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 50)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_String,
@@ -1929,7 +1890,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 52,
+            funcId: 51,
             port: port_,
           );
         },
@@ -1954,7 +1915,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(dataDir, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 53)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 52)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_pending_install,
@@ -1989,7 +1950,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 54,
+            funcId: 53,
             port: port_,
           );
         },
@@ -2024,7 +1985,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 55,
+            funcId: 54,
             port: port_,
           );
         },
@@ -2051,7 +2012,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 56,
+            funcId: 55,
             port: port_,
           );
         },
@@ -2075,7 +2036,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 57)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 56)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -2097,7 +2058,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 58)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 57)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -2564,12 +2525,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Counts dco_decode_box_autoadd_counts(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_counts(raw);
-  }
-
-  @protected
-  DnsResult dco_decode_box_autoadd_dns_result(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_dns_result(raw);
   }
 
   @protected
@@ -3065,25 +3020,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  DnsResult dco_decode_dns_result(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    switch (raw[0]) {
-      case 0:
-        return DnsResult_Points();
-      case 1:
-        return DnsResult_Mixed(others: dco_decode_list_String(raw[1]));
-      case 2:
-        return DnsResult_Elsewhere(others: dco_decode_list_String(raw[1]));
-      case 3:
-        return DnsResult_Unresolved();
-      case 4:
-        return DnsResult_BadName();
-      default:
-        throw Exception("unreachable");
-    }
-  }
-
-  @protected
   Enrolled dco_decode_enrolled(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return Enrolled.values[raw as int];
@@ -3567,32 +3503,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
       case 0:
-        return InstallAsk_SetOverride(
-          name: dco_decode_String(raw[1]),
-          broker: dco_decode_String(raw[2]),
-        );
-      case 1:
         return InstallAsk_RestartFeeder();
-      case 2:
+      case 1:
         return InstallAsk_JoinFeederNetwork();
-      case 3:
+      case 2:
         return InstallAsk_LeaveFeederNetwork();
-      case 4:
+      case 3:
         return InstallAsk_RecognizeFeeder(
           device: dco_decode_String(raw[1]),
           address: dco_decode_String(raw[2]),
         );
-      case 5:
+      case 4:
         return InstallAsk_OpenRecoveryWindow();
-      case 6:
+      case 5:
         return InstallAsk_OpenLink();
-      case 7:
+      case 6:
         return InstallAsk_WriteLink(
           pieces: dco_decode_list_list_prim_u_8_strict(raw[1]),
         );
-      case 8:
+      case 7:
         return InstallAsk_CloseLink();
-      case 9:
+      case 8:
         return InstallAsk_Locate(identity: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
@@ -3621,74 +3552,70 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
       case 0:
-        return InstallEvent_DnsChecked(
-          result: dco_decode_box_autoadd_dns_result(raw[1]),
-        );
-      case 1:
         return InstallEvent_StockServerStarted();
-      case 2:
+      case 1:
         return InstallEvent_AwaitingStock();
-      case 3:
+      case 2:
         return InstallEvent_Waiting(why: dco_decode_wait_reason(raw[1]));
-      case 4:
+      case 3:
         return InstallEvent_VersionLost();
-      case 5:
+      case 4:
         return InstallEvent_StockServerEnded(error: dco_decode_String(raw[1]));
-      case 6:
+      case 5:
         return InstallEvent_Requesting(build: dco_decode_String(raw[1]));
-      case 7:
+      case 6:
         return InstallEvent_StockProgress(percent: dco_decode_u_8(raw[1]));
-      case 8:
+      case 7:
         return InstallEvent_StockRestarting();
-      case 9:
+      case 8:
         return InstallEvent_KeyKnown();
-      case 10:
+      case 9:
         return InstallEvent_SetupStarting();
-      case 11:
+      case 10:
         return InstallEvent_NoSetupFeeder(error: dco_decode_String(raw[1]));
-      case 12:
+      case 11:
         return InstallEvent_Code(
           code: dco_decode_list_prim_u_8_strict(raw[1]),
           seconds: dco_decode_u_16(raw[2]),
         );
-      case 13:
+      case 12:
         return InstallEvent_PressDispense();
-      case 14:
+      case 13:
         return InstallEvent_Paired(
           identity: dco_decode_list_prim_u_8_strict(raw[1]),
           address: dco_decode_opt_String(raw[2]),
           rebooting: dco_decode_bool(raw[3]),
         );
-      case 15:
+      case 14:
         return InstallEvent_Joined(address: dco_decode_String(raw[1]));
-      case 16:
+      case 15:
         return InstallEvent_ReplacementAnswers(
           build: dco_decode_String(raw[1]),
           bank: dco_decode_u_8(raw[2]),
         );
-      case 17:
+      case 16:
         return InstallEvent_ReadingBackup(total: dco_decode_u_32(raw[1]));
-      case 18:
+      case 17:
         return InstallEvent_BackupRead(
           bytes: dco_decode_u_64(raw[1]),
           total: dco_decode_u_32(raw[2]),
         );
-      case 19:
+      case 18:
         return InstallEvent_BackupKept(path: dco_decode_String(raw[1]));
-      case 20:
+      case 19:
         return InstallEvent_Promoting();
-      case 21:
+      case 20:
         return InstallEvent_Written(
           written: dco_decode_u_32(raw[1]),
           length: dco_decode_u_32(raw[2]),
         );
-      case 22:
+      case 21:
         return InstallEvent_SessionDropped();
-      case 23:
+      case 22:
         return InstallEvent_Activated();
-      case 24:
+      case 23:
         return InstallEvent_Installed(build: dco_decode_String(raw[1]));
-      case 25:
+      case 24:
         return InstallEvent_Note(text: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
@@ -3699,8 +3626,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   InstallSpec dco_decode_install_spec(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 13)
-      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
+    if (arr.length != 12)
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
     return InstallSpec(
       start: dco_decode_install_start(arr[0]),
       address: dco_decode_opt_String(arr[1]),
@@ -3712,27 +3639,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       storePath: dco_decode_String(arr[7]),
       imageDir: dco_decode_String(arr[8]),
       dataDir: dco_decode_String(arr[9]),
-      calibrateClock: dco_decode_bool(arr[10]),
-      forgetEnrollment: dco_decode_bool(arr[11]),
-      setupAgain: dco_decode_bool(arr[12]),
+      forgetEnrollment: dco_decode_bool(arr[10]),
+      setupAgain: dco_decode_bool(arr[11]),
     );
   }
 
   @protected
   InstallStart dco_decode_install_start(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    switch (raw[0]) {
-      case 0:
-        return InstallStart_Dns(name: dco_decode_String(raw[1]));
-      case 1:
-        return InstallStart_Reset();
-      case 2:
-        return InstallStart_FrameTaken();
-      case 3:
-        return InstallStart_Bank0();
-      default:
-        throw Exception("unreachable");
-    }
+    return InstallStart.values[raw as int];
   }
 
   @protected
@@ -5478,12 +5393,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  DnsResult sse_decode_box_autoadd_dns_result(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_dns_result(deserializer));
-  }
-
-  @protected
   Erases sse_decode_box_autoadd_erases(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_erases(deserializer));
@@ -6041,29 +5950,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  DnsResult sse_decode_dns_result(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    var tag_ = sse_decode_i_32(deserializer);
-    switch (tag_) {
-      case 0:
-        return DnsResult_Points();
-      case 1:
-        var var_others = sse_decode_list_String(deserializer);
-        return DnsResult_Mixed(others: var_others);
-      case 2:
-        var var_others = sse_decode_list_String(deserializer);
-        return DnsResult_Elsewhere(others: var_others);
-      case 3:
-        return DnsResult_Unresolved();
-      case 4:
-        return DnsResult_BadName();
-      default:
-        throw UnimplementedError('');
-    }
-  }
-
-  @protected
   Enrolled sse_decode_enrolled(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
@@ -6603,32 +6489,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var tag_ = sse_decode_i_32(deserializer);
     switch (tag_) {
       case 0:
-        var var_name = sse_decode_String(deserializer);
-        var var_broker = sse_decode_String(deserializer);
-        return InstallAsk_SetOverride(name: var_name, broker: var_broker);
-      case 1:
         return InstallAsk_RestartFeeder();
-      case 2:
+      case 1:
         return InstallAsk_JoinFeederNetwork();
-      case 3:
+      case 2:
         return InstallAsk_LeaveFeederNetwork();
-      case 4:
+      case 3:
         var var_device = sse_decode_String(deserializer);
         var var_address = sse_decode_String(deserializer);
         return InstallAsk_RecognizeFeeder(
           device: var_device,
           address: var_address,
         );
-      case 5:
+      case 4:
         return InstallAsk_OpenRecoveryWindow();
-      case 6:
+      case 5:
         return InstallAsk_OpenLink();
-      case 7:
+      case 6:
         var var_pieces = sse_decode_list_list_prim_u_8_strict(deserializer);
         return InstallAsk_WriteLink(pieces: var_pieces);
-      case 8:
+      case 7:
         return InstallAsk_CloseLink();
-      case 9:
+      case 8:
         var var_identity = sse_decode_String(deserializer);
         return InstallAsk_Locate(identity: var_identity);
       default:
@@ -6665,42 +6547,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var tag_ = sse_decode_i_32(deserializer);
     switch (tag_) {
       case 0:
-        var var_result = sse_decode_box_autoadd_dns_result(deserializer);
-        return InstallEvent_DnsChecked(result: var_result);
-      case 1:
         return InstallEvent_StockServerStarted();
-      case 2:
+      case 1:
         return InstallEvent_AwaitingStock();
-      case 3:
+      case 2:
         var var_why = sse_decode_wait_reason(deserializer);
         return InstallEvent_Waiting(why: var_why);
-      case 4:
+      case 3:
         return InstallEvent_VersionLost();
-      case 5:
+      case 4:
         var var_error = sse_decode_String(deserializer);
         return InstallEvent_StockServerEnded(error: var_error);
-      case 6:
+      case 5:
         var var_build = sse_decode_String(deserializer);
         return InstallEvent_Requesting(build: var_build);
-      case 7:
+      case 6:
         var var_percent = sse_decode_u_8(deserializer);
         return InstallEvent_StockProgress(percent: var_percent);
-      case 8:
+      case 7:
         return InstallEvent_StockRestarting();
-      case 9:
+      case 8:
         return InstallEvent_KeyKnown();
-      case 10:
+      case 9:
         return InstallEvent_SetupStarting();
-      case 11:
+      case 10:
         var var_error = sse_decode_String(deserializer);
         return InstallEvent_NoSetupFeeder(error: var_error);
-      case 12:
+      case 11:
         var var_code = sse_decode_list_prim_u_8_strict(deserializer);
         var var_seconds = sse_decode_u_16(deserializer);
         return InstallEvent_Code(code: var_code, seconds: var_seconds);
-      case 13:
+      case 12:
         return InstallEvent_PressDispense();
-      case 14:
+      case 13:
         var var_identity = sse_decode_list_prim_u_8_strict(deserializer);
         var var_address = sse_decode_opt_String(deserializer);
         var var_rebooting = sse_decode_bool(deserializer);
@@ -6709,40 +6588,40 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           address: var_address,
           rebooting: var_rebooting,
         );
-      case 15:
+      case 14:
         var var_address = sse_decode_String(deserializer);
         return InstallEvent_Joined(address: var_address);
-      case 16:
+      case 15:
         var var_build = sse_decode_String(deserializer);
         var var_bank = sse_decode_u_8(deserializer);
         return InstallEvent_ReplacementAnswers(
           build: var_build,
           bank: var_bank,
         );
-      case 17:
+      case 16:
         var var_total = sse_decode_u_32(deserializer);
         return InstallEvent_ReadingBackup(total: var_total);
-      case 18:
+      case 17:
         var var_bytes = sse_decode_u_64(deserializer);
         var var_total = sse_decode_u_32(deserializer);
         return InstallEvent_BackupRead(bytes: var_bytes, total: var_total);
-      case 19:
+      case 18:
         var var_path = sse_decode_String(deserializer);
         return InstallEvent_BackupKept(path: var_path);
-      case 20:
+      case 19:
         return InstallEvent_Promoting();
-      case 21:
+      case 20:
         var var_written = sse_decode_u_32(deserializer);
         var var_length = sse_decode_u_32(deserializer);
         return InstallEvent_Written(written: var_written, length: var_length);
-      case 22:
+      case 21:
         return InstallEvent_SessionDropped();
-      case 23:
+      case 22:
         return InstallEvent_Activated();
-      case 24:
+      case 23:
         var var_build = sse_decode_String(deserializer);
         return InstallEvent_Installed(build: var_build);
-      case 25:
+      case 24:
         var var_text = sse_decode_String(deserializer);
         return InstallEvent_Note(text: var_text);
       default:
@@ -6763,7 +6642,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_storePath = sse_decode_String(deserializer);
     var var_imageDir = sse_decode_String(deserializer);
     var var_dataDir = sse_decode_String(deserializer);
-    var var_calibrateClock = sse_decode_bool(deserializer);
     var var_forgetEnrollment = sse_decode_bool(deserializer);
     var var_setupAgain = sse_decode_bool(deserializer);
     return InstallSpec(
@@ -6777,7 +6655,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       storePath: var_storePath,
       imageDir: var_imageDir,
       dataDir: var_dataDir,
-      calibrateClock: var_calibrateClock,
       forgetEnrollment: var_forgetEnrollment,
       setupAgain: var_setupAgain,
     );
@@ -6786,21 +6663,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   InstallStart sse_decode_install_start(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-
-    var tag_ = sse_decode_i_32(deserializer);
-    switch (tag_) {
-      case 0:
-        var var_name = sse_decode_String(deserializer);
-        return InstallStart_Dns(name: var_name);
-      case 1:
-        return InstallStart_Reset();
-      case 2:
-        return InstallStart_FrameTaken();
-      case 3:
-        return InstallStart_Bank0();
-      default:
-        throw UnimplementedError('');
-    }
+    var inner = sse_decode_i_32(deserializer);
+    return InstallStart.values[inner];
   }
 
   @protected
@@ -9017,15 +8881,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_box_autoadd_dns_result(
-    DnsResult self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_dns_result(self, serializer);
-  }
-
-  @protected
   void sse_encode_box_autoadd_erases(Erases self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_erases(self, serializer);
@@ -9593,25 +9448,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_dns_result(DnsResult self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    switch (self) {
-      case DnsResult_Points():
-        sse_encode_i_32(0, serializer);
-      case DnsResult_Mixed(others: final others):
-        sse_encode_i_32(1, serializer);
-        sse_encode_list_String(others, serializer);
-      case DnsResult_Elsewhere(others: final others):
-        sse_encode_i_32(2, serializer);
-        sse_encode_list_String(others, serializer);
-      case DnsResult_Unresolved():
-        sse_encode_i_32(3, serializer);
-      case DnsResult_BadName():
-        sse_encode_i_32(4, serializer);
-    }
-  }
-
-  @protected
   void sse_encode_enrolled(Enrolled self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
@@ -10063,34 +9899,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_install_ask(InstallAsk self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
-      case InstallAsk_SetOverride(name: final name, broker: final broker):
-        sse_encode_i_32(0, serializer);
-        sse_encode_String(name, serializer);
-        sse_encode_String(broker, serializer);
       case InstallAsk_RestartFeeder():
-        sse_encode_i_32(1, serializer);
+        sse_encode_i_32(0, serializer);
       case InstallAsk_JoinFeederNetwork():
-        sse_encode_i_32(2, serializer);
+        sse_encode_i_32(1, serializer);
       case InstallAsk_LeaveFeederNetwork():
-        sse_encode_i_32(3, serializer);
+        sse_encode_i_32(2, serializer);
       case InstallAsk_RecognizeFeeder(
         device: final device,
         address: final address,
       ):
-        sse_encode_i_32(4, serializer);
+        sse_encode_i_32(3, serializer);
         sse_encode_String(device, serializer);
         sse_encode_String(address, serializer);
       case InstallAsk_OpenRecoveryWindow():
-        sse_encode_i_32(5, serializer);
+        sse_encode_i_32(4, serializer);
       case InstallAsk_OpenLink():
-        sse_encode_i_32(6, serializer);
+        sse_encode_i_32(5, serializer);
       case InstallAsk_WriteLink(pieces: final pieces):
-        sse_encode_i_32(7, serializer);
+        sse_encode_i_32(6, serializer);
         sse_encode_list_list_prim_u_8_strict(pieces, serializer);
       case InstallAsk_CloseLink():
-        sse_encode_i_32(8, serializer);
+        sse_encode_i_32(7, serializer);
       case InstallAsk_Locate(identity: final identity):
-        sse_encode_i_32(9, serializer);
+        sse_encode_i_32(8, serializer);
         sse_encode_String(identity, serializer);
     }
   }
@@ -10117,86 +9949,83 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_install_event(InstallEvent self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
-      case InstallEvent_DnsChecked(result: final result):
-        sse_encode_i_32(0, serializer);
-        sse_encode_box_autoadd_dns_result(result, serializer);
       case InstallEvent_StockServerStarted():
-        sse_encode_i_32(1, serializer);
+        sse_encode_i_32(0, serializer);
       case InstallEvent_AwaitingStock():
-        sse_encode_i_32(2, serializer);
+        sse_encode_i_32(1, serializer);
       case InstallEvent_Waiting(why: final why):
-        sse_encode_i_32(3, serializer);
+        sse_encode_i_32(2, serializer);
         sse_encode_wait_reason(why, serializer);
       case InstallEvent_VersionLost():
-        sse_encode_i_32(4, serializer);
+        sse_encode_i_32(3, serializer);
       case InstallEvent_StockServerEnded(error: final error):
-        sse_encode_i_32(5, serializer);
+        sse_encode_i_32(4, serializer);
         sse_encode_String(error, serializer);
       case InstallEvent_Requesting(build: final build):
-        sse_encode_i_32(6, serializer);
+        sse_encode_i_32(5, serializer);
         sse_encode_String(build, serializer);
       case InstallEvent_StockProgress(percent: final percent):
-        sse_encode_i_32(7, serializer);
+        sse_encode_i_32(6, serializer);
         sse_encode_u_8(percent, serializer);
       case InstallEvent_StockRestarting():
-        sse_encode_i_32(8, serializer);
+        sse_encode_i_32(7, serializer);
       case InstallEvent_KeyKnown():
-        sse_encode_i_32(9, serializer);
+        sse_encode_i_32(8, serializer);
       case InstallEvent_SetupStarting():
-        sse_encode_i_32(10, serializer);
+        sse_encode_i_32(9, serializer);
       case InstallEvent_NoSetupFeeder(error: final error):
-        sse_encode_i_32(11, serializer);
+        sse_encode_i_32(10, serializer);
         sse_encode_String(error, serializer);
       case InstallEvent_Code(code: final code, seconds: final seconds):
-        sse_encode_i_32(12, serializer);
+        sse_encode_i_32(11, serializer);
         sse_encode_list_prim_u_8_strict(code, serializer);
         sse_encode_u_16(seconds, serializer);
       case InstallEvent_PressDispense():
-        sse_encode_i_32(13, serializer);
+        sse_encode_i_32(12, serializer);
       case InstallEvent_Paired(
         identity: final identity,
         address: final address,
         rebooting: final rebooting,
       ):
-        sse_encode_i_32(14, serializer);
+        sse_encode_i_32(13, serializer);
         sse_encode_list_prim_u_8_strict(identity, serializer);
         sse_encode_opt_String(address, serializer);
         sse_encode_bool(rebooting, serializer);
       case InstallEvent_Joined(address: final address):
-        sse_encode_i_32(15, serializer);
+        sse_encode_i_32(14, serializer);
         sse_encode_String(address, serializer);
       case InstallEvent_ReplacementAnswers(
         build: final build,
         bank: final bank,
       ):
-        sse_encode_i_32(16, serializer);
+        sse_encode_i_32(15, serializer);
         sse_encode_String(build, serializer);
         sse_encode_u_8(bank, serializer);
       case InstallEvent_ReadingBackup(total: final total):
-        sse_encode_i_32(17, serializer);
+        sse_encode_i_32(16, serializer);
         sse_encode_u_32(total, serializer);
       case InstallEvent_BackupRead(bytes: final bytes, total: final total):
-        sse_encode_i_32(18, serializer);
+        sse_encode_i_32(17, serializer);
         sse_encode_u_64(bytes, serializer);
         sse_encode_u_32(total, serializer);
       case InstallEvent_BackupKept(path: final path):
-        sse_encode_i_32(19, serializer);
+        sse_encode_i_32(18, serializer);
         sse_encode_String(path, serializer);
       case InstallEvent_Promoting():
-        sse_encode_i_32(20, serializer);
+        sse_encode_i_32(19, serializer);
       case InstallEvent_Written(written: final written, length: final length):
-        sse_encode_i_32(21, serializer);
+        sse_encode_i_32(20, serializer);
         sse_encode_u_32(written, serializer);
         sse_encode_u_32(length, serializer);
       case InstallEvent_SessionDropped():
-        sse_encode_i_32(22, serializer);
+        sse_encode_i_32(21, serializer);
       case InstallEvent_Activated():
-        sse_encode_i_32(23, serializer);
+        sse_encode_i_32(22, serializer);
       case InstallEvent_Installed(build: final build):
-        sse_encode_i_32(24, serializer);
+        sse_encode_i_32(23, serializer);
         sse_encode_String(build, serializer);
       case InstallEvent_Note(text: final text):
-        sse_encode_i_32(25, serializer);
+        sse_encode_i_32(24, serializer);
         sse_encode_String(text, serializer);
     }
   }
@@ -10214,7 +10043,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.storePath, serializer);
     sse_encode_String(self.imageDir, serializer);
     sse_encode_String(self.dataDir, serializer);
-    sse_encode_bool(self.calibrateClock, serializer);
     sse_encode_bool(self.forgetEnrollment, serializer);
     sse_encode_bool(self.setupAgain, serializer);
   }
@@ -10222,17 +10050,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_install_start(InstallStart self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    switch (self) {
-      case InstallStart_Dns(name: final name):
-        sse_encode_i_32(0, serializer);
-        sse_encode_String(name, serializer);
-      case InstallStart_Reset():
-        sse_encode_i_32(1, serializer);
-      case InstallStart_FrameTaken():
-        sse_encode_i_32(2, serializer);
-      case InstallStart_Bank0():
-        sse_encode_i_32(3, serializer);
-    }
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected

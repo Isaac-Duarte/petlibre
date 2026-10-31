@@ -13,7 +13,6 @@
 use std::sync::Mutex;
 
 use flutter_rust_bridge::frb;
-use wellfed_client::install::DnsCheck;
 use wellfed_install::build_info::BUILD;
 
 use crate::api::keys::ClientKey;
@@ -25,8 +24,6 @@ use crate::install::{self, Listener, Run};
 
 /// How the feeder finds this phone.
 pub enum InstallStart {
-    /// The owner's resolver answers stock's broker `name` with this phone.
-    Dns { name: String },
     /// The owner reset the feeder, which opened its setup network: this phone
     /// joins it and sends `home` and its own address there, once.
     Reset,
@@ -63,10 +60,6 @@ pub struct InstallSpec {
     /// The installer's own folder: the stock server's config and records,
     /// and the backups.
     pub data_dir: String,
-    /// Have the stock server set stock's clock even when its own reading is
-    /// unknown or far off. Stock may then run meals that came due in the
-    /// jump, so the owner chooses this.
-    pub calibrate_clock: bool,
     /// Forget the feeder the broker trusted before: the owner said it was
     /// not theirs, or two answered.
     pub forget_enrollment: bool,
@@ -74,38 +67,6 @@ pub struct InstallSpec {
     /// and put it back in setup mode: Bluetooth setup goes again rather than
     /// waiting for it.
     pub setup_again: bool,
-}
-
-/// What a resolver answered for stock's broker name.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DnsResult {
-    /// It answers with this phone alone.
-    Points,
-    /// It answers with this phone and `others`: stock may take any of them.
-    Mixed { others: Vec<String> },
-    /// It answers with `others` only.
-    Elsewhere { others: Vec<String> },
-    /// It has no answer for the name.
-    Unresolved,
-    /// The name cannot be a broker's name.
-    BadName,
-}
-
-impl From<DnsCheck> for DnsResult {
-    fn from(check: DnsCheck) -> Self {
-        let text =
-            |addresses: Vec<std::net::IpAddr>| addresses.iter().map(ToString::to_string).collect();
-        match check {
-            DnsCheck::Points => Self::Points,
-            DnsCheck::Mixed(others) => Self::Mixed {
-                others: text(others),
-            },
-            DnsCheck::Elsewhere(others) => Self::Elsewhere {
-                others: text(others),
-            },
-            DnsCheck::Unresolved => Self::Unresolved,
-        }
-    }
 }
 
 /// Why the run still waits for stock.
@@ -126,9 +87,6 @@ pub enum WaitReason {
 /// One step of progress, for the screens.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstallEvent {
-    DnsChecked {
-        result: DnsResult,
-    },
     /// The broker listens, with its enrollment window open.
     StockServerStarted,
     /// The feeder restarts; the run waits for stock at the broker.
@@ -222,8 +180,6 @@ pub enum InstallEvent {
 /// What a run needs Dart to do. Each is answered once, by its id.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstallAsk {
-    /// Answered done once the owner's resolver answers `name` with `broker`.
-    SetOverride { name: String, broker: String },
     /// Answered done once the owner was told: the broker already listens.
     RestartFeeder,
     /// Join the feeder's setup network, answered done once this process's
@@ -571,13 +527,6 @@ pub fn check_build() -> BuildCheck {
             commit: unreviewed.commit.to_string(),
         },
     }
-}
-
-/// Look stock's broker `name` up from this phone and say what it found
-/// against `phone_ip`. Advice only: this phone may ask another resolver
-/// than the feeder does, so a run waits for stock whatever it says.
-pub async fn check_dns(name: String, phone_ip: String) -> DnsResult {
-    install::check_dns(&name, &phone_ip).await
 }
 
 /// What an earlier run left on the feeder.

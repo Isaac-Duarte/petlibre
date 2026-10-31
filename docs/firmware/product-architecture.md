@@ -104,7 +104,7 @@ Some detail on each:
 - **The Android app** (`src/app/`) does its platform IO in Dart through maintained, permissively licensed plugins: BLE (`flutter_reactive_ble`), NSD, and a foreground service for the install. Its Rust half, `wellfed-app-bridge`, runs every protocol step through `wellfed-client` and its LAN sessions through `wellfed-connect`, over `flutter_rust_bridge`, which also generates the Dart types. An install runs `wellfed-install` on a thread of its own, and asks Dart for what only the phone has.
   - With a server, it talks to the server over HTTP first, and to the feeder directly only when the server is down. Without one, it talks to feeders on the LAN.
   - Setup, pairing and the installer always go to the feeder.
-  - It can run the stock installer through a DNS record on the owner's router, serving the image itself from a foreground service. The route through stock's setup access point and the `DL` frame is not built ([consumer installation](consumer-installation.md)).
+  - It can run the stock installer through stock's setup access point and the `DL` frame, serving the image itself from a foreground service ([consumer installation](consumer-installation.md)).
 - **Other platforms** are the same app and the same Rust, not a fork. Each needs its own side of the platform IO: Bluetooth, discovery, joining a network and keeping the process alive. In order:
   - macOS and Linux, which run the install and can hand a feeder to a phone with an owner's invite;
   - iPhone, for setup and daily use;

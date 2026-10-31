@@ -2,7 +2,7 @@
 //! [`Event`] as the line (or lines) it has always printed, on standard
 //! error, so standard output carries only what `--prompts lines` puts there.
 
-use wellfed_client::install::{DnsCheck, STOCK_VERSION};
+use wellfed_client::install::STOCK_VERSION;
 use wellfed_client::update_key::Enrolled;
 use wellfed_install::Report;
 use wellfed_install::event::{Enrollment, Event, Wait};
@@ -26,25 +26,8 @@ pub(crate) fn short(build: &str) -> &str {
 /// The words for `event`.
 pub(crate) fn line(event: &Event) -> String {
     match event {
-        Event::DnsChecked {
-            name,
-            broker,
-            check,
-        } => match check {
-            DnsCheck::Points => format!("This computer resolves {name} to {broker}, as it should."),
-            DnsCheck::Mixed(addresses) => format!(
-                "This computer resolves {name} to {addresses:?}: {broker} and others. Stock may \
-                 take any of them, so make {broker} the only answer."
-            ),
-            DnsCheck::Elsewhere(addresses) => format!(
-                "This computer resolves {name} to {addresses:?}, not {broker}. If it asks the \
-                 same resolver as the feeder, the override is not in place yet."
-            ),
-            DnsCheck::Unresolved => format!("This computer cannot resolve {name}."),
-        },
         Event::AwaitingStock => "Waiting for stock to connect here. If it does not within a few \
-                                 minutes, check the override in the resolver your router hands \
-                                 out and restart the feeder again; nothing is sent to stock \
+                                 minutes, restart the feeder again; nothing is sent to stock \
                                  until it does."
             .to_string(),
         Event::StockServerStarted => {

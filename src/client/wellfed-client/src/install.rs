@@ -7,15 +7,10 @@
 //! The run, in order ([`Step`] says which is next):
 //! 1. **Provision:** stock is pointed at the installer's broker, where it
 //!    connects with its own MQTT credentials, which the broker trusts on
-//!    first use; nothing captured, nothing redirected. Two routes
-//!    ([`Provision`]):
-//!    - **The Reset hold**, which needs nothing from the owner's router: the
-//!      hold runs stock's factory restore; then one type-3 setup frame
-//!      ([`frame`]) to stock's setup access point names the owner's Wi-Fi and
-//!      the installer's broker.
-//!    - **DNS** ([`dns`]): the owner's resolver answers stock's broker name with the installer's
-//!      address, and a restarted stock connects there. Nothing is written to
-//!      the feeder.
+//!    first use; nothing captured, nothing redirected. The Reset hold runs
+//!    stock's factory restore; then one type-3 setup frame ([`frame`]) to
+//!    stock's setup access point names the owner's Wi-Fi and the installer's
+//!    broker ([`Provision`]).
 //! 2. **Stock ready:** stock reports 1.1.15 on its adapter, the same
 //!    conditions its own precheck and the server's trial gate hold.
 //! 3. **Confirm the feeder:** trust on first use admits whichever stock-
@@ -66,7 +61,6 @@
 //! [consumer installation]: ../../../../docs/firmware/consumer-installation.md
 
 pub mod backup;
-pub mod dns;
 pub mod frame;
 
 pub use backup::{
@@ -74,7 +68,6 @@ pub use backup::{
     RestoreOffer, STOCK_OTA_SHA256, STOCK_PAYLOAD_LEN, STOCK_PAYLOAD_SHA256, STOCK_VERSION,
     StockBackup, StockPins, VerifiedBackup,
 };
-pub use dns::{DnsCheck, DnsError, DnsOverride, STOCK_BROKER_PORT};
 pub use frame::{FrameError, SETUP_ADDRESS, SetupFrame};
 
 use wellfed_model::{Client, ClientRole, Readiness};
@@ -148,13 +141,13 @@ pub fn manifest_build(manifest: &[u8]) -> Option<[u8; 32]> {
 /// confirmed statically).
 pub const STOCK_CLOCK_UNSET: u32 = 1214;
 
+/// The port the app's broker listens on and its frame names: stock's plaintext
+/// MQTT (static analysis; the research unit's settings sector holds it).
+pub const STOCK_BROKER_PORT: u16 = 1883;
+
 /// How stock is pointed at the installer's broker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Provision {
-    /// The owner's resolver answers stock's broker name with the installer's
-    /// broker, and stock, restarted, connects there. Nothing is written to
-    /// the feeder.
-    Dns(DnsOverride),
     /// The owner holds Reset, which runs stock's factory restore and opens its setup access point; then this
     /// frame goes there.
     Frame(SetupFrame),
@@ -347,12 +340,6 @@ pub enum InstallError {
 /// What the caller does next.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {
-    /// Ask the owner to have their resolver answer the override's name with
-    /// its broker; look the name up and show [`DnsOverride::check`], as
-    /// advice only; then start the broker, so its enrollment window opens
-    /// just before the owner restarts the feeder and stock looks the name up
-    /// again; then [`Install::dns_pointed`].
-    PointDns(DnsOverride),
     /// With this host joined to stock's setup access point, send these bytes
     /// once to [`SETUP_ADDRESS`] over UDP, then call
     /// [`Install::frame_sent`]. Never resent: stock applies a frame once.
@@ -422,7 +409,6 @@ pub enum Step {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Stage {
-    PointDns(DnsOverride),
     Provision(FrameBytes),
     /// The frame is out; waiting for the caller to say so.
     FrameOut,
@@ -476,7 +462,6 @@ impl Install {
     /// sent.
     pub fn new(provision: Provision, build: &str, options: Options) -> Result<Self, FrameError> {
         let stage = match provision {
-            Provision::Dns(dns) => Stage::PointDns(dns),
             Provision::Frame(frame) => Stage::Provision(FrameBytes(frame.encode()?)),
             Provision::Done => Stage::AwaitStock,
         };
@@ -509,7 +494,6 @@ impl Install {
     /// The next thing to do.
     pub fn step(&mut self) -> Step {
         match &self.stage {
-            Stage::PointDns(dns) => Step::PointDns(dns.clone()),
             Stage::Provision(frame) => {
                 let frame = frame.clone();
                 self.stage = Stage::FrameOut;
@@ -551,7 +535,7 @@ impl Install {
     /// Where the run stands, for a progress display.
     pub fn phase(&self) -> Phase {
         match self.stage {
-            Stage::PointDns(_) | Stage::Provision(_) | Stage::FrameOut => Phase::Provision,
+            Stage::Provision(_) | Stage::FrameOut => Phase::Provision,
             Stage::AwaitStock => Phase::AwaitStock,
             Stage::ConfirmFeeder(_) => Phase::ConfirmFeeder,
             Stage::Request | Stage::Requesting => Phase::Request,
@@ -589,14 +573,6 @@ impl Install {
     /// The backup promotion waits for, once given.
     pub fn verified_backup(&self) -> Option<VerifiedBackup> {
         self.backup
-    }
-
-    /// The owner says their resolver answers stock's broker name with the
-    /// installer's broker and the feeder restarted: wait for stock there.
-    pub fn dns_pointed(&mut self) {
-        if matches!(self.stage, Stage::PointDns(_)) {
-            self.stage = Stage::AwaitStock;
-        }
     }
 
     /// The frame went out (the caller left stock's access point after).

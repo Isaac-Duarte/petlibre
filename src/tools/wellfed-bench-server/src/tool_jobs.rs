@@ -107,19 +107,12 @@ pub struct InstallArgs {
     /// The installer's `wellfed-stock` config (`init-installer`).
     #[arg(long)]
     pub stock_config: PathBuf,
-    /// Stock's broker name, which the owner's resolver points at this
-    /// computer: the DNS route.
-    #[arg(long, conflicts_with = "from_bank0")]
-    pub broker_name: Option<String>,
     /// The replacement is already on bank 0: start at pairing.
     #[arg(long)]
     pub from_bank0: bool,
     /// How long the broker trusts the first stock feeder that connects.
     #[arg(long)]
     pub enroll_minutes: Option<u64>,
-    /// Have the stock server set stock's clock even when it is far off.
-    #[arg(long)]
-    pub calibrate_clock: bool,
     /// This computer's client key; the installer's default otherwise.
     #[arg(long)]
     pub keys: Option<PathBuf>,
@@ -155,9 +148,6 @@ impl InstallArgs {
             value("expect-device", device);
         }
         value("stock-config", &self.stock_config);
-        if let Some(name) = &self.broker_name {
-            value("broker-name", name);
-        }
         if let Some(minutes) = self.enroll_minutes {
             value("enroll-minutes", &minutes.to_string());
         }
@@ -168,13 +158,8 @@ impl InstallArgs {
             value("address", address);
         }
 
-        for (flag, on) in [
-            ("--from-bank0", self.from_bank0),
-            ("--calibrate-clock", self.calibrate_clock),
-        ] {
-            if on {
-                arguments.push(flag.into());
-            }
+        if self.from_bank0 {
+            arguments.push("--from-bank0".into());
         }
         arguments
     }
@@ -835,8 +820,7 @@ fn panel_presses(prompt: &Prompt) -> Option<Vec<Buttons>> {
         Prompt::PressDispense {
             purpose: DispensePurpose::EnrollUpdateKey,
         } => Some(vec![Buttons::of(wellfed_core::buttons::Button::Dispense)]),
-        Prompt::SetOverride { .. }
-        | Prompt::RestartFeeder
+        Prompt::RestartFeeder
         | Prompt::RecognizeFeeder { .. }
         | Prompt::SetupMode
         | Prompt::JoinBack
@@ -880,7 +864,6 @@ mod tests {
             review: "private/r".into(),
             manifest: Some("private/m.json".into()),
             stock_config: "private/installer.json".into(),
-            broker_name: Some("-x.example".into()),
             update_key: None,
             home_network: None,
             ble_address: None,
@@ -888,7 +871,6 @@ mod tests {
             virtual_panel: false,
             from_bank0: false,
             enroll_minutes: Some(5),
-            calibrate_clock: true,
             keys: None,
             address: None,
         };
@@ -907,9 +889,7 @@ mod tests {
                 "--review=private/r",
                 "--manifest=private/m.json",
                 "--stock-config=private/installer.json",
-                "--broker-name=-x.example",
                 "--enroll-minutes=5",
-                "--calibrate-clock",
             ]
         );
     }

@@ -14,9 +14,7 @@
 //! The binary is the bench's server over it
 //! (docs/development/stock-server.md): `serve` runs [`server`]; `ota-images`
 //! the image server; `network` the feeder-only gateway redirect in
-//! `network`; `plans` stock's stored feeding plans from a flash read
-//! ([`plans`]); `broker-name` the broker its settings name
-//! ([`broker_name`]). The bench host's pieces (the binary, `network` and
+//! `network`. The bench host's pieces (the binary, `network` and
 //! `neighbour`) are behind the default `bench` feature, which an
 //! installer leaves out.
 
@@ -24,7 +22,6 @@
 #![warn(clippy::print_stdout)]
 
 pub mod api;
-pub mod broker_name;
 pub mod build_info;
 pub mod clock;
 pub mod config;

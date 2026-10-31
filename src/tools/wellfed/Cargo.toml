@@ -37,6 +37,7 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-mu
 # The in-process stock server's log, as `wellfed-stock serve` writes it.
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { workspace = true, features = ["v4"] }
+rpassword = "7"
 
 [dev-dependencies]
 wellfed-server-testkit.workspace = true

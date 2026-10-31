@@ -48,7 +48,7 @@ mod text;
 mod trace;
 mod update_key;
 
-use std::io::BufRead;
+use std::io::{BufRead, IsTerminal};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -214,9 +214,13 @@ fn main() -> Result<ExitCode> {
     device.map(|()| ExitCode::SUCCESS)
 }
 
-/// The passphrase, from standard input without echoing it anywhere.
+/// The passphrase: typed at a terminal with no echo, or piped in by a script.
 fn passphrase() -> Result<String> {
-    eprintln!("Passphrase for the feeder's network (standard input):");
+    if std::io::stdin().is_terminal() {
+        eprint!("Password for the feeder's Wi-Fi (it won't show as you type): ");
+        return rpassword::read_password().context("read the password");
+    }
+
     let mut line = String::new();
     std::io::stdin()
         .lock()

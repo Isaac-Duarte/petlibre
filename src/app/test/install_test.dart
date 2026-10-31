@@ -226,7 +226,9 @@ void main() {
         await _tap(tester, 'Listen for the feeder');
         expect(ports.runs, isEmpty);
         expect(ports.listeners, hasLength(1));
-        expect(find.text("We don't know yet if it installed"), findsOneWidget);
+        // It may have installed and gone back since, so it claims nothing.
+        expect(find.text('Waiting to hear from the feeder'), findsOneWidget);
+        expect(find.text("We don't know yet if it installed"), findsNothing);
         await tester.pumpWidget(const SizedBox());
       },
     );

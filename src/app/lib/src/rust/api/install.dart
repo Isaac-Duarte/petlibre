@@ -29,6 +29,18 @@ BuildCheck checkBuild() => RustLib.instance.api.crateApiInstallCheckBuild();
 PendingInstall pendingInstall({required String dataDir}) =>
     RustLib.instance.api.crateApiInstallPendingInstall(dataDir: dataDir);
 
+/// A session with this feeder read `build`, which settles the stock trial that
+/// installed it, if one is open.
+void feederAnswered({
+  required String dataDir,
+  required List<int> identity,
+  required String build,
+}) => RustLib.instance.api.crateApiInstallFeederAnswered(
+  dataDir: dataDir,
+  identity: identity,
+  build: build,
+);
+
 /// The checked copy of stock this phone keeps for the feeder with `identity`.
 String? keptBackup({required String dataDir, required List<int> identity}) =>
     RustLib.instance.api.crateApiInstallKeptBackup(

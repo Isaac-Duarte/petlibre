@@ -40,6 +40,20 @@ FeederRequest_PutSettings _put(FakeSession session) =>
 
 void main() {
   group('Settings', () {
+    testWidgets('a session opening says which build answered', (tester) async {
+      final ports = FakeFeederPorts();
+      final feeder = FeederController(
+        FakeBook()..feeders = [kitchen],
+        ports,
+        kitchen,
+      );
+      addTearDown(feeder.dispose);
+      await tester.pump();
+      ports.session.opened();
+      await tester.pump();
+      expect(ports.answers, [(kitchen.identity, 'test')]);
+    });
+
     testWidgets('shows what the feeder holds', (tester) async {
       await _settingsTab(tester);
 

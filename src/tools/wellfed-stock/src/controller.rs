@@ -150,6 +150,44 @@ pub fn open_request(config_path: &Path) -> Result<bool> {
     }))
 }
 
+/// Close `device`'s latest open trial: the replacement answered with its build
+/// at `answered_at`, after the request went out, in a session only that
+/// feeder's key can open. Stock is not what answered, so this goes by a
+/// proven session where [`Controller::replacement_answered`] takes a client's
+/// word: a stock that reported after the request does not hold it open. Sends
+/// nothing. Reads and writes the ledger alone, and fails while a server owns
+/// it. Whether a trial closed.
+pub fn close_answered(
+    config_path: &Path,
+    device: &str,
+    build: &str,
+    answered_at: DateTime<Utc>,
+    note: String,
+) -> Result<bool> {
+    let path = ledger_path(config_path, device)?;
+    if !path.exists() {
+        return Ok(false);
+    }
+    let _lease = storage::lock(&path)?;
+    let mut ledger: Ledger =
+        serde_json::from_slice(&fs::read(&path)?).context("invalid stock ledger")?;
+    let Some(record) = ledger.ota_trials.values_mut().max_by_key(|r| r.sequence) else {
+        return Ok(false);
+    };
+    if !matches!(record.phase, TrialPhase::Submitted | TrialPhase::Uncertain)
+        || record.build.as_deref() != Some(build)
+        || answered_at <= record.created_at
+    {
+        return Ok(false);
+    }
+
+    record.phase = TrialPhase::ReplacementHealthy;
+    record.resolution_note = Some(note);
+    record.updated_at = Utc::now();
+    storage::write_json(&path, &ledger)?;
+    Ok(true)
+}
+
 pub struct Controller {
     pub config: Config,
     pub status: Status,

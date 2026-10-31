@@ -1191,3 +1191,138 @@ fn setup_again_on_another_feeder_stops_and_keeps_the_record() {
         );
     });
 }
+
+/// The trial a first run left open on stock's ledger, for `build`.
+fn open_trial(data: &Path, device: &str, build: &str) {
+    let (id, at) = (
+        uuid::Uuid::from_u128(7),
+        chrono::Utc::now() - chrono::TimeDelta::hours(1),
+    );
+    let record = serde_json::json!({
+        "device_id": device,
+        "ota_trials": { id.to_string(): {
+            "sequence": 1,
+            "input": {"request_id": id, "server_token": id},
+            "created_at": at, "updated_at": at,
+            "phase": "uncertain", "download_reported": true,
+            "resolution_note": null, "image_sha256": "ab".repeat(32),
+            "build": build, "stock_reported": true,
+        }},
+    });
+    let ledger = wellfed_install::stock::ledger_path(&data.join("installer.json"), device);
+    std::fs::write(ledger.unwrap(), serde_json::to_vec(&record).unwrap()).unwrap();
+}
+
+/// The phone that stopped at the claim and picked up: the pairing's record
+/// names the feeder, and nothing has answered yet.
+fn paired(data: &Path, device: &str, identity: &[u8; 32]) {
+    std::fs::create_dir_all(data.join("backups")).unwrap();
+    std::fs::write(
+        data.join("backups/installing.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "device": device,
+            "identity": wellfed_formats::hex::encode(identity),
+            "address": null,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+fn with_enrolled(dir: &Path, device: &str) {
+    wellfed_install::stock::installer_config(
+        &dir.join("installer.json"),
+        "127.41.8.50:1883".parse().unwrap(),
+        None,
+    )
+    .unwrap();
+    enroll(dir, device, "127.41.8.51");
+}
+
+/// A pick-up that reads the build its trial installed closes the trial, though
+/// no server runs and no request of its own went out, so the next install may
+/// ask. This is the run that left the ledger open on the research unit
+/// (physical, October 30). The image server refuses a loopback peer, so the
+/// second request itself goes no further than the ledger's gate, read here.
+#[test]
+fn a_pick_up_that_reads_the_build_lets_the_next_install_ask() {
+    local(async {
+        let fixture = Fixture::new(Provisioning::Consumer);
+        let keys = Keypair::from_secret([0x51; 32]);
+        let sim = Running::start(&Flash::memory(), Some(*keys.public())).await;
+        let spec = || fixture.spec(InstallStart::Bank0, "127.41.8.52");
+        let data = Path::new(&spec().data_dir).to_path_buf();
+        std::fs::create_dir_all(&data).unwrap();
+        with_enrolled(&data, "AF_TEST");
+
+        let pick_up = async || {
+            paired(&data, "AF_TEST", &sim.identity);
+            let (run, mut heard) = started(&fixture, spec());
+            let build = loop {
+                match next(&mut heard).await {
+                    InstallUpdate::Ask { id, .. } => run.answer(
+                        id,
+                        InstallAnswer::Located {
+                            address: Some(sim.address.to_string()),
+                        },
+                    ),
+                    InstallUpdate::Event {
+                        event: InstallEvent::ReplacementAnswers { build, .. },
+                    } => break build,
+                    InstallUpdate::Event { .. } => {}
+                    InstallUpdate::Ended { end } => panic!("{end:?}"),
+                }
+            };
+            run.stop();
+            ended(&mut heard).await;
+            build
+        };
+
+        // Only to learn the build the simulator answers with.
+        let build = pick_up().await;
+        let config = data.join("installer.json");
+        open_trial(&data, "AF_TEST", &build);
+        assert!(wellfed_install::stock::open_request(&config));
+
+        pick_up().await;
+        assert!(!wellfed_install::stock::open_request(&config));
+        sim.stop().await;
+    });
+}
+
+/// A trial nothing answered for stays open: not for another build, another
+/// feeder, or a feeder this phone never paired from that stock.
+#[test]
+fn a_trial_nothing_answered_for_still_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    with_enrolled(dir.path(), "AF_A");
+    open_trial(dir.path(), "AF_A", "cd");
+    let (ours, other) = ([1; 32], [2; 32]);
+    let answered = |identity: &[u8; 32], build: &str| {
+        wellfed_app_bridge::install::feeder_answered(dir.path(), identity, build);
+    };
+
+    answered(&ours, "cd");
+    assert_eq!(
+        pending(dir.path()),
+        PendingInstall::RequestOpen,
+        "never paired"
+    );
+
+    paired(dir.path(), "AF_A", &ours);
+    answered(&other, "cd");
+    answered(&ours, "ef");
+    std::fs::remove_file(dir.path().join("backups/installing.json")).unwrap();
+    assert_eq!(
+        pending(dir.path()),
+        PendingInstall::RequestOpen,
+        "wrong feeder or build"
+    );
+
+    answered(&ours, "cd");
+    assert_eq!(
+        pending(dir.path()),
+        PendingInstall::Nothing,
+        "the link outlives the pairing"
+    );
+}

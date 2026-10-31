@@ -59,7 +59,7 @@ const FRAME_ACCOUNT: &str = "1";
 const ENROLL: Duration = Duration::from_secs(15 * 60);
 
 /// Where the installer keeps its files under its data directory.
-const CONFIG: &str = "installer.json";
+pub(crate) const CONFIG: &str = "installer.json";
 pub(crate) const BACKUPS: &str = "backups";
 
 /// The image's own files, in the folder the APK's were unpacked into.
@@ -170,6 +170,16 @@ pub fn pending(data_dir: &Path) -> PendingInstall {
     } else {
         PendingInstall::Nothing
     }
+}
+
+/// A session with the feeder `identity` read `build`. A failure only leaves the
+/// trial for the next answer, or the record's own rule, to close.
+pub fn feeder_answered(data_dir: &Path, identity: &[u8], build: &str) {
+    let Ok(identity) = <[u8; 32]>::try_from(identity) else {
+        return;
+    };
+    let (config, backups) = (data_dir.join(CONFIG), data_dir.join(BACKUPS));
+    let _ = wellfed_install::stock::feeder_answered(&config, &backups, &identity, build);
 }
 
 pub fn kept_backup(data_dir: &Path, identity: &[u8]) -> Option<String> {

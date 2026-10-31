@@ -97,6 +97,9 @@ class InstallFlow extends ChangeNotifier {
   ImageCheck? image;
   BuildCheck? build;
 
+  /// This listen is for a request an earlier run left, not one this run sent.
+  bool listeningForEarlier = false;
+
   /// What an earlier run left on the feeder.
   PendingInstall pending = PendingInstall.nothing;
   InstallPaths? _paths;
@@ -471,6 +474,7 @@ class InstallFlow extends ChangeNotifier {
       resume: Resume.nothing,
       detail: stop?.detail ?? '',
     );
+    listeningForEarlier = true;
     _go(InstallStage.stopped);
     await listen();
   }
@@ -538,6 +542,7 @@ class InstallFlow extends ChangeNotifier {
     stop = null;
     _resetProgress();
     listening = Listening.idle;
+    listeningForEarlier = false;
     waitReason = null;
     restartAgain = false;
     // A fresh launch can get here from an open request, with neither asked yet.

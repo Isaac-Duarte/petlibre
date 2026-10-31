@@ -91,6 +91,11 @@ pub struct Plan {
 }
 
 impl Plan {
+    /// The feeder this restore is for, and where its records are.
+    pub fn target(&self) -> (&[u8; 32], &Path) {
+        (&self.target.identity, &self.target.backups)
+    }
+
     /// Restore `backup` as the stock image: only the pinned container passes.
     pub fn new(backup: &StockBackup, target: Target) -> Result<Self, Error> {
         Ok(Self {

@@ -25,6 +25,10 @@ abstract interface class FeederPorts {
     required bool syncClock,
   });
 
+  /// A session with this feeder read `build`, which settles the stock trial
+  /// that installed it, if one is open.
+  Future<void> answered(String identity, String build);
+
   /// Where the feeder answers, within `wait`.
   Future<String?> locate(String identity, Duration wait);
 
@@ -51,6 +55,16 @@ class AppFeederPorts implements FeederPorts {
 
   /// The unpacking and paths the install uses: one image, one place.
   late final _install = AppInstallPorts(_key);
+
+  @override
+  Future<void> answered(String identity, String build) async {
+    final paths = await _install.paths();
+    feederAnswered(
+      dataDir: paths.data,
+      identity: identityBytes(hex: identity),
+      build: build,
+    );
+  }
 
   @override
   FeederSession open(

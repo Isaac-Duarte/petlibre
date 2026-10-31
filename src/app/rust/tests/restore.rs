@@ -292,3 +292,76 @@ fn a_file_of_other_bytes_is_refused_before_anything_starts() {
         assert_eq!(case, RestoreStop::BackupRefused);
     });
 }
+
+/// A trial this feeder's build already answered for closes when stock goes back,
+/// since stock will not say what became of it; one with no answer stays open.
+#[test]
+fn a_restore_s_activation_closes_a_trial_its_build_answered_for() {
+    local(async {
+        let rig = Rig::start().await;
+        let data = rig.dir.path();
+        let config = data.join("installer.json");
+        wellfed_install::stock::installer_config(
+            &config,
+            "127.41.8.60:1883".parse().unwrap(),
+            None,
+        )
+        .unwrap();
+        let record = wellfed_formats::stock::Enrollment {
+            client_id: "AF_A".into(),
+            username: "stock".into(),
+            password: "its-password".into(),
+            address: "127.41.8.61".parse().unwrap(),
+            enrolled_at: chrono::DateTime::from_timestamp(1, 0).unwrap(),
+        };
+        std::fs::write(
+            wellfed_formats::stock::Enrollment::path(&config),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+        let (id, at) = (uuid::Uuid::from_u128(7), chrono::Utc::now());
+        let ledger = serde_json::json!({
+            "device_id": "AF_A",
+            "ota_trials": { id.to_string(): {
+                "sequence": 1,
+                "input": {"request_id": id, "server_token": id},
+                "created_at": at - chrono::TimeDelta::hours(1),
+                "updated_at": at,
+                "phase": "uncertain", "download_reported": true,
+                "resolution_note": null, "image_sha256": "ab".repeat(32),
+                "build": "cd", "stock_reported": true,
+            }},
+        });
+        std::fs::write(
+            wellfed_install::stock::ledger_path(&config, "AF_A").unwrap(),
+            serde_json::to_vec(&ledger).unwrap(),
+        )
+        .unwrap();
+        let backups = data.join("backups");
+        let answered = wellfed_install::storage::feeder_directory(&backups, &rig.sim.identity);
+        std::fs::create_dir_all(&answered).unwrap();
+        std::fs::write(
+            answered.join("answered.json"),
+            serde_json::to_vec(&serde_json::json!({"device": "AF_A", "build": "cd", "at": at}))
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(wellfed_install::stock::open_request(&config));
+
+        let backup = synthetic();
+        let plan = Plan::synthetic(&backup, rig.target(Some(rig.sim.address), Signing::Fresh));
+        let (_run, mut heard) = started(plan);
+        let end = loop {
+            match next(&mut heard).await {
+                RestoreUpdate::Event {
+                    event: InstallEvent::PressDispense,
+                } => rig.sim.type_line("press dispense").unwrap(),
+                RestoreUpdate::Ended { end } => break end,
+                _ => {}
+            }
+        };
+
+        assert_eq!(end, RestoreEnd::Activated);
+        assert!(!wellfed_install::stock::open_request(&config));
+    });
+}

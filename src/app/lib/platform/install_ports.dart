@@ -70,7 +70,6 @@ abstract interface class InstallPorts {
   /// Wi-Fi, or `null` if it does not come back in time.
   Future<String?> leaveFeederNetwork();
 
-
   /// Ask Android for what the install needs; whether Bluetooth was allowed.
   /// `bluetooth` is `false` for a bench image, which pairs over the LAN.
   Future<bool> askPermissions({required bool bluetooth});

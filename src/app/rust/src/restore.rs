@@ -24,7 +24,7 @@ use crate::api::restore::{
     BackupCheck, RestoreEnd, RestoreSeen, RestoreSpec, RestoreStop, RestoreUpdate, UncertainWhy,
 };
 use crate::install::{
-    AppDiscovery, AppPrompter, AppReport, Asks, BACKUPS, STACK, guarded, stopped, text,
+    AppDiscovery, AppPrompter, AppReport, Asks, BACKUPS, CONFIG, STACK, guarded, stopped, text,
 };
 
 pub fn check_backup(path: &Path) -> BackupCheck {
@@ -264,8 +264,18 @@ fn run_on_this_thread(
         report: AppReport(asks),
         offering,
     };
+    let (identity, backups) = plan.target();
+    let (identity, backups) = (*identity, backups.to_path_buf());
     match runtime.block_on(restore(plan, platform, stopped(stop))) {
-        Ok(Restored::Activated) => RestoreEnd::Activated,
+        Ok(Restored::Activated) => {
+            // Stock is going back, so nothing else will say what became of a
+            // trial this feeder's build already answered for.
+            if let Some(data) = backups.parent() {
+                let config = data.join(CONFIG);
+                let _ = wellfed_install::stock::settle_answered(&config, &backups, &identity);
+            }
+            RestoreEnd::Activated
+        }
         Ok(Restored::Uncertain(why)) => match why {
             Uncertainty::Gone => RestoreEnd::Uncertain {
                 why: UncertainWhy::Gone,

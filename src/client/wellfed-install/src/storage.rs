@@ -160,6 +160,45 @@ impl Paired {
     }
 }
 
+/// A feeder's proven session answered with this build: the evidence that closes
+/// the stock trial that installed it, kept with the feeder because a trial can
+/// outlive the run that saw the answer. It stays, since only its time says
+/// whether a later trial came after it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Answered {
+    /// Stock's device ID, as the installer's broker enrolled it.
+    pub(crate) device: String,
+    pub(crate) build: String,
+    pub(crate) at: chrono::DateTime<chrono::Utc>,
+}
+
+impl Answered {
+    const FILE: &str = "answered.json";
+
+    pub(crate) fn load(backups: &Path, identity: &[u8; 32]) -> Result<Option<Self>, Error> {
+        let path = feeder_directory(backups, identity).join(Self::FILE);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(Error::Read { path, source }),
+        };
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|source| Error::Parse { path, source })
+    }
+
+    pub(crate) fn keep(&self, backups: &Path, identity: &[u8; 32]) -> Result<(), Error> {
+        let directory = feeder_directory(backups, identity);
+        std::fs::create_dir_all(&directory).map_err(|source| Error::Create {
+            path: directory.clone(),
+            source,
+        })?;
+        let path = directory.join(Self::FILE);
+        wellfed_formats::private::write_json(&path, self)
+            .map_err(|source| Error::Write { path, source })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

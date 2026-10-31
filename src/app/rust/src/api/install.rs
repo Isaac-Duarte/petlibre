@@ -548,6 +548,13 @@ pub fn pending_install(data_dir: String) -> PendingInstall {
     install::pending(std::path::Path::new(&data_dir))
 }
 
+/// A session with this feeder read `build`, which settles the stock trial that
+/// installed it, if one is open.
+#[frb(sync)]
+pub fn feeder_answered(data_dir: String, identity: Vec<u8>, build: String) {
+    install::feeder_answered(std::path::Path::new(&data_dir), &identity, &build);
+}
+
 /// The checked copy of stock this phone keeps for the feeder with `identity`.
 #[frb(sync)]
 pub fn kept_backup(data_dir: String, identity: Vec<u8>) -> Option<String> {

@@ -179,6 +179,9 @@ where
         by = stop => Err(by),
     };
     run.stock.stop().await;
+    // Its server held the ledger, and any way this run ended leaves the answer
+    // it saw as true as it was.
+    run.settle_answered();
 
     match ended {
         Ok(result) => result,
@@ -505,6 +508,7 @@ where
                 Step::ReadStatus => {
                     self.kept_promotion(install);
                     let (build, bank) = self.status().await?;
+                    self.answered(&build);
                     self.io.report.event(Event::ReplacementAnswers {
                         build: build.clone(),
                         bank,
@@ -1202,6 +1206,32 @@ where
                 request: "status",
                 answer: Box::new(other),
             }),
+        }
+    }
+
+    /// Whatever run this is, the feeder's own key just answered with `build`:
+    /// that settles the trial that installed it, here if no server holds the
+    /// ledger, else once this run's has stopped.
+    fn answered(&self, build: &str) {
+        let Some(identity) = self.identity else {
+            return;
+        };
+        match crate::stock::feeder_answered(self.stock.config(), &self.backups, &identity, build) {
+            Ok(true) => self.io.report.event(Event::TrialClosed),
+            Ok(false) => {}
+            Err(error) if self.stock.serving() => drop(error),
+            Err(error) => self.io.report.event(Event::TrialOpen {
+                error: error.to_string(),
+            }),
+        }
+    }
+
+    fn settle_answered(&self) {
+        if let Some(identity) = self.identity
+            && let Ok(true) =
+                crate::stock::settle_answered(self.stock.config(), &self.backups, &identity)
+        {
+            self.io.report.event(Event::TrialClosed);
         }
     }
 

@@ -162,7 +162,9 @@ The server sends nothing, and closes only the latest submitted or uncertain tria
 - **The answer names the served build on bank 0.** Its `build` equals the identity recorded at submission, and `bank` is 0. A record from before the identity was kept never closes this way.
 - **Stock is not demonstrably running.** Its telemetry is not current (none for 90 s), and it has reported no version since the submission. A version report after the submission marks the trial for good (`stock_reported` in the ledger). Stock was still running then, so a dropped session that came back on 1.1.15 cannot be closed by an answer; only `ota-trial-resolve`'s version evidence resolves it. This fails safe: if stock also reports its version during a download, an install that did succeed waits for the resolution as before.
 
-The answer is still the client's word. The server checks it against what it served, not against the device API itself. `wellfed-itest`'s bank-0 step asks for 120 s, past stock's telemetry window.
+A proven session closes a trial too, with neither condition about stock. When a feeder this phone or computer paired from stock answers its own key's session with the trial's build, after the request, the installer records that answer beside the feeder's backups and closes the latest submitted or uncertain trial in the ledger: on any run that reads the feeder's status, a pick-up included, when a session opens from Home, and at a restore's activation. A trial no such session answered stays open.
+
+The answer through the API is still the client's word. The server checks it against what it served, not against the device API itself. `wellfed-itest`'s bank-0 step asks for 120 s, past stock's telemetry window.
 
 Operation with a nonempty plan, and stock's time-recovery behavior, are unvalidated; see [stock behavior](../devices/plaf103/stock/README.md).
 

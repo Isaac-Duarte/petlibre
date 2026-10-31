@@ -207,8 +207,8 @@ pub struct TrialRecord {
     pub build: Option<String>,
     /// Stock reported its version after the trial was submitted, so it was
     /// still running then. A trial so marked never closes on a client's
-    /// word that the replacement answered: only fresh version evidence
-    /// resolves it.
+    /// word that the replacement answered: only fresh version evidence, or a
+    /// session the replacement's own key opened after it, resolves it.
     #[serde(default)]
     pub stock_reported: bool,
 }

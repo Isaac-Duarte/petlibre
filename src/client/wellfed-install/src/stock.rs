@@ -97,6 +97,55 @@ pub fn open_request(config: &Path) -> bool {
     config.exists() && wellfed_stock::controller::open_request(config).unwrap_or(true)
 }
 
+/// The feeder with `identity` just answered with `build` in a proven session:
+/// remember it, for the feeder's stock device, and close that device's trial if
+/// this is the build it installed. A feeder this phone never paired from stock
+/// is no evidence of any trial. Whether a trial closed; fails while a server
+/// owns the ledger, with the answer kept for [`settle_answered`].
+pub fn feeder_answered(
+    config: &Path,
+    backups: &Path,
+    identity: &[u8; 32],
+    build: &str,
+) -> Result<bool, Error> {
+    let paired = crate::storage::Paired::load(backups)?
+        .filter(|record| record.identity.0 == *identity)
+        .map(|record| record.device);
+    let known = crate::storage::Answered::load(backups, identity)?.map(|answered| answered.device);
+    let Some(device) = paired.or(known) else {
+        return Ok(false);
+    };
+
+    crate::storage::Answered {
+        device,
+        build: build.to_string(),
+        at: chrono::Utc::now(),
+    }
+    .keep(backups, identity)?;
+    settle_answered(config, backups, identity)
+}
+
+/// Close the trial the feeder with `identity` was last seen answering for, if
+/// it is still open and the answer came after it: at the end of a run, whose
+/// server held the ledger, and at a restore's activation.
+pub fn settle_answered(config: &Path, backups: &Path, identity: &[u8; 32]) -> Result<bool, Error> {
+    let Some(answered) = crate::storage::Answered::load(backups, identity)? else {
+        return Ok(false);
+    };
+    let note = format!(
+        "build {} answered from this feeder's key",
+        &answered.build[..answered.build.len().min(12)]
+    );
+    wellfed_stock::controller::close_answered(
+        config,
+        &answered.device,
+        &answered.build,
+        answered.at,
+        note,
+    )
+    .map_err(|error| Error::StockServer(error.into()))
+}
+
 /// Why the server's status is not there to read.
 pub(crate) enum Unready {
     /// No feeder has enrolled, so the session with stock has not started.
@@ -141,6 +190,14 @@ impl Stock {
             images: None,
             ended: None,
         }
+    }
+
+    pub(crate) const fn serving(&self) -> bool {
+        self.server.is_some()
+    }
+
+    pub(crate) fn config(&self) -> &Path {
+        &self.options.config
     }
 
     pub(crate) fn enroll(&self) -> Duration {

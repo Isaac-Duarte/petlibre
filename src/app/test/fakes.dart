@@ -476,6 +476,11 @@ class FakeSession with _FakeOpaque implements FeederSession {
 
 class FakeFeederPorts implements FeederPorts {
   final sessions = <FakeSession>[];
+  final answers = <(String, String)>[];
+
+  @override
+  Future<void> answered(String identity, String build) async =>
+      answers.add((identity, build));
 
   FakeSession get session => sessions.last;
 

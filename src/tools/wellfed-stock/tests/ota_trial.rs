@@ -853,3 +853,50 @@ fn a_trial_open_under_a_captured_config_refuses_the_same_device_through_an_insta
         Err(Rejection::OtaActive)
     ));
 }
+
+/// The ledger alone: a proven answer after the request closes it even with stock
+/// marked as having reported, and nothing else does.
+#[test]
+fn only_a_later_answer_with_the_trial_s_build_closes_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("installer.json");
+    let device = "AF_A";
+    let path = wellfed_stock::controller::ledger_path(&config, device).unwrap();
+    let (id, created) = (uuid::Uuid::from_u128(7), Utc::now() - Duration::seconds(60));
+    let write = |stock_reported: bool, phase: &str| {
+        let record = json!({
+            "device_id": device,
+            "ota_trials": { id.to_string(): {
+                "sequence": 1,
+                "input": {"request_id": id, "server_token": id},
+                "created_at": created, "updated_at": created,
+                "phase": phase, "download_reported": true,
+                "resolution_note": null, "image_sha256": "ab".repeat(32),
+                "build": "cd", "stock_reported": stock_reported,
+            }},
+        });
+        std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    };
+    let close = |build: &str, at| {
+        wellfed_stock::controller::close_answered(&config, device, build, at, "seen".into())
+            .unwrap()
+    };
+
+    write(true, "uncertain");
+    assert!(!close("other", Utc::now()), "another build");
+    assert!(
+        !close("cd", created - Duration::seconds(1)),
+        "an answer from before the request is about an earlier install"
+    );
+    assert!(
+        close("cd", Utc::now()),
+        "stock's report does not hold it open"
+    );
+    assert!(!close("cd", Utc::now()), "closed once");
+
+    write(false, "reported_error");
+    assert!(
+        !close("cd", Utc::now()),
+        "a reported failure takes its resolution"
+    );
+}

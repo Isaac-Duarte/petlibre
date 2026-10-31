@@ -937,6 +937,14 @@ class _Stopped extends StatelessWidget {
         "We can't listen for the feeder",
         flow.listenerDetail ?? 'Something on this phone stopped it.',
       ),
+      _ when flow.listeningForEarlier => (
+        'Waiting to hear from the feeder',
+        'This phone never heard how an earlier install ended, even if you have '
+            'put the original firmware back since. Leave the feeder plugged in. '
+            'That install closes 20 minutes after it went out, once the feeder '
+            'has reported its version and been quiet for 10. Nothing is sent a '
+            'second time.',
+      ),
       _ => (
         "We don't know yet if it installed",
         'The feeder stopped answering partway through. That can be normal '
@@ -997,8 +1005,10 @@ class _Stopped extends StatelessWidget {
     ),
     StopCase_EarlierRequestOpen() => (
       'An earlier install is still open',
-      'The feeder never answered about it, so Wellfed will not ask again until '
-          'it has heard from it.',
+      'This phone never heard how it ended, even if you have put the original '
+          'firmware back since, so Wellfed will not ask again yet. Listen with '
+          'the feeder plugged in: 20 minutes after that install, once it has '
+          'reported its version and been quiet for 10, you can start again.',
     ),
     StopCase_RequestRefused(:final why) => switch (why) {
       RequestRefusal.stale => (

@@ -252,7 +252,8 @@ class FeederController extends ChangeNotifier {
         break;
       }
       switch (update) {
-        case SessionUpdate_Opened(role: final r):
+        case SessionUpdate_Opened(:final build, role: final r):
+          unawaited(_ports.answered(known.identity, build));
           opened = true;
           role = r;
           error = null;

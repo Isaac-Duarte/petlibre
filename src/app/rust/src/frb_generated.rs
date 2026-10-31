@@ -45,7 +45,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1553127826;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1464125642;
 
 // Section: executor
 
@@ -1998,6 +1998,40 @@ fn wire__crate__api__install__check_image_impl(
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
                 let output_ok = Ok::<_, ()>(crate::api::install::check_image(api_dir))?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__install__feeder_answered_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "feeder_answered",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_data_dir = <String>::sse_decode(&mut deserializer);
+            let api_identity = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_build = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>({
+                    crate::api::install::feeder_answered(api_data_dir, api_identity, api_build);
+                })?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -6452,14 +6486,14 @@ fn pde_ffi_dispatcher_primary_impl(
         31 => wire__crate__api__restore__RestoreRun_run_impl(port, ptr, rust_vec_len, data_len),
         37 => wire__crate__api__store__app_store_default_impl(port, ptr, rust_vec_len, data_len),
         39 => wire__crate__api__store__appearance_default_impl(port, ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__init_app_impl(port, ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__join__join_feeder_impl(port, ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__store__load_store_impl(port, ptr, rust_vec_len, data_len),
-        53 => {
+        48 => wire__crate__api__init_app_impl(port, ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__join__join_feeder_impl(port, ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__store__load_store_impl(port, ptr, rust_vec_len, data_len),
+        54 => {
             wire__crate__api__restore__read_restore_feeder_impl(port, ptr, rust_vec_len, data_len)
         }
-        54 => wire__crate__api__store__save_store_impl(port, ptr, rust_vec_len, data_len),
-        55 => wire__crate__api__feeder__settings_changes_default_impl(
+        55 => wire__crate__api__store__save_store_impl(port, ptr, rust_vec_len, data_len),
+        56 => wire__crate__api__feeder__settings_changes_default_impl(
             port,
             ptr,
             rust_vec_len,
@@ -6514,15 +6548,16 @@ fn pde_ffi_dispatcher_sync_impl(
         40 => wire__crate__api__restore__check_backup_impl(ptr, rust_vec_len, data_len),
         41 => wire__crate__api__install__check_build_impl(ptr, rust_vec_len, data_len),
         42 => wire__crate__api__install__check_image_impl(ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__store__fingerprint_impl(ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__restore__forget_restore_key_impl(ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__store__identity_bytes_impl(ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__store__identity_hex_impl(ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__join__invite_feeder_impl(ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__install__kept_backup_impl(ptr, rust_vec_len, data_len),
-        52 => wire__crate__api__install__pending_install_impl(ptr, rust_vec_len, data_len),
-        56 => wire__crate__api__setup__setup_control_impl(ptr, rust_vec_len, data_len),
-        57 => wire__crate__api__setup__setup_service_impl(ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__install__feeder_answered_impl(ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__store__fingerprint_impl(ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__restore__forget_restore_key_impl(ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__store__identity_bytes_impl(ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__store__identity_hex_impl(ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__join__invite_feeder_impl(ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__install__kept_backup_impl(ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__install__pending_install_impl(ptr, rust_vec_len, data_len),
+        57 => wire__crate__api__setup__setup_control_impl(ptr, rust_vec_len, data_len),
+        58 => wire__crate__api__setup__setup_service_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

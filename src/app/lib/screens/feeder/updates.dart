@@ -28,6 +28,7 @@ class UpdatesScreen extends StatefulWidget {
 class _UpdatesScreenState extends State<UpdatesScreen> {
   ImageCheck? _image;
   UpdateInfo? _state;
+  bool _ended = false;
 
   FeederController get _feeder => widget.feeder;
   UpdateFlow get _flow => widget.feeder.update;
@@ -35,7 +36,22 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
   @override
   void initState() {
     super.initState();
+    _flow.addListener(_flowChanged);
     unawaited(_read());
+  }
+
+  @override
+  void dispose() {
+    _flow.removeListener(_flowChanged);
+    super.dispose();
+  }
+
+  // An update moves the floor this screen shows, so leaving its end reads it
+  // again.
+  void _flowChanged() {
+    final ended = _flow.stage == UpdateStage.ended;
+    if (_ended && _flow.stage == UpdateStage.idle) unawaited(_read());
+    _ended = ended;
   }
 
   Future<void> _read() async {
@@ -139,7 +155,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
           ]),
           const SizedBox(height: Space.s3),
           Text(
-            'Takes about a minute. Feeding waits while it installs, and meals '
+            'Takes a few minutes. Feeding waits while it installs, and meals '
             "due in that minute run when it's done.",
             style: TextStyle(fontSize: 15, height: 1.5, color: c.text),
           ),
@@ -210,7 +226,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
         const _Line(
           done: false,
           active: false,
-          text: 'Check it can feed, then keep it',
+          text: 'Check it started properly, then keep it',
         ),
         const SizedBox(height: Space.s4),
         Text(

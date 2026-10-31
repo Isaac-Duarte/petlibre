@@ -185,6 +185,21 @@ void main() {
     );
     await tapIn(tester, find.text('Look again'));
     expect(find.text('Updated'), findsOneWidget);
+
+    session.replies.add(
+      const FeederReply.update(
+        update: UpdateInfo(
+          phase: UpdatePhase.idle,
+          bank: 1,
+          minVersion: 7,
+          version: 0,
+          imageLen: 0,
+          written: 0,
+        ),
+      ),
+    );
+    await tapIn(tester, find.text('Done'));
+    expect(find.text('7'), findsOneWidget, reason: 'the floor, read again');
   });
 
   testWidgets('an offer held by an earlier stop offers its cancel, once', (

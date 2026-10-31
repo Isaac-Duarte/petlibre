@@ -1496,6 +1496,11 @@ pub fn unscheduled<R>(f: impl FnOnce() -> R) -> R {
     result
 }
 
+/// The bank this image runs from, or `None` for a mapping that is neither.
+pub fn running_bank() -> Option<u8> {
+    flash_mmu_entry0().bank()
+}
+
 /// Read the live KM0 image mapping. No flash/status/register writes are made
 /// by this observation.
 pub fn flash_mmu_entry0() -> FlashMmuEntry {

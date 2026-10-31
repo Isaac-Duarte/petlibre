@@ -375,3 +375,28 @@ fn a_build_that_faults_at_every_boot_resets_only_a_few_times_an_hour() {
         }
     }
 }
+
+/// The handover erases the confirmation on bank 0, where it decides nothing:
+/// erased, torn or whole, bank 0 boots the same, so a cut through that erase
+/// changes no boot. The same build in bank 1 afterwards runs a real trial,
+/// whatever count the boots before left under its tag.
+#[test]
+fn a_forgotten_confirmation_changes_only_the_next_bank_1_boot() {
+    let whole = confirm_record(&ID, 5);
+    let mut torn = whole;
+    torn[20..].fill(0xff);
+
+    let mut register = 0;
+    for record in [&whole, &torn, &NONE] {
+        let (decision, next) = decide(&CLEARED, &MARKER, record, register, &ID);
+        assert_eq!(decision, Decision::NotBank1 { resets: 0 }, "{record:?}");
+        register = deliberate(next);
+    }
+
+    for record in [&torn, &NONE] {
+        let (decision, _) = decide(&MARKER, &MARKER, record, register, &ID);
+        assert_eq!(decision, Decision::Counted(1));
+    }
+    let (decision, _) = decide(&MARKER, &MARKER, &whole, register, &ID);
+    assert_eq!(decision, Decision::Confirmed { resets: 0 });
+}

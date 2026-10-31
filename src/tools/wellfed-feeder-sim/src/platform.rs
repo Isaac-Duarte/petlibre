@@ -278,7 +278,7 @@ impl SimPlatform {
         mdns: Option<(UdpSocket, Ipv4Addr)>,
     ) -> Result<Self, DeviceError> {
         finish_reset(flash);
-        finish_handover(flash);
+        finish_handover(flash, bank);
         let mut settings = SettingsStore::default();
         settings.open(Region::new(flash, storage::SETTINGS), BINDING);
         let mut net = NetStore::default();
@@ -722,7 +722,7 @@ fn finish_reset(flash: &Rc<Flash>) {
 /// A handover from stock's activation, as the settings writer finishes it: a
 /// consumer image's, for the simulator has no build Wi-Fi. A cut in the middle
 /// repeats it, since the mark goes last.
-fn finish_handover(flash: &Rc<Flash>) {
+fn finish_handover(flash: &Rc<Flash>, bank: u8) {
     let marker = Region::new(flash, storage::RESET);
     if !handover::pending(&marker) {
         return;
@@ -744,6 +744,9 @@ fn finish_handover(flash: &Rc<Flash>) {
     update.open(Region::new(flash, storage::UPDATE));
     let _ = update.start_over();
     wellfed_hal::ota::update::store_started_over();
+    if bank == 0 {
+        Region::new(flash, storage::CONFIRM).erase(0);
+    }
     handover::clear(&marker);
 }
 

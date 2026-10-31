@@ -23,6 +23,7 @@ use tokio::net::{TcpStream, UdpSocket};
 use wellfed_board_plaf103::storage;
 use wellfed_core::buttons::Gesture;
 use wellfed_core::feed::controller::FeedReason;
+use wellfed_core::ota::offer::ImageKind;
 use wellfed_core::ota::{self, CONFIRM_LEN};
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::store::update::{State, UpdateStore};
@@ -331,7 +332,11 @@ fn boot(flash: &Rc<Flash>, banks: &mut Banks, key: Option<[u8; 32]>) -> (Boot, [
     if banks.bank1_valid()
         && let State::Activated(candidate) = store.record().state
     {
-        banks.bank1_build = candidate.build_id;
+        if banks.stock_reinstalls && candidate.kind == ImageKind::Stock {
+            banks.stock_gave_way();
+        } else {
+            banks.bank1_build = candidate.build_id;
+        }
     }
 
     // An unreadable record names no build, as erased flash does.

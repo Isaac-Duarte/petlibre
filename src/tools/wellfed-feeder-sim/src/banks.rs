@@ -75,6 +75,10 @@ pub struct Banks {
     bank1: Vec<u8>,
     /// The build in bank 1, once bank 0 activated one there.
     pub bank1_build: [u8; 32],
+    /// Stock is not simulated: a stock image bank 0 activated runs, then
+    /// installs a build into bank 0 by its own server before the next boot
+    /// the simulator sees, rather than booting as a build of ours.
+    pub stock_reinstalls: bool,
     pub bank0_build: [u8; 32],
     /// KM0's backup register: this power-on's trial and storm counts.
     register: u32,
@@ -115,6 +119,7 @@ impl Banks {
             bank0,
             bank1,
             bank1_build: BANK1_BUILD,
+            stock_reinstalls: false,
             bank0_build: BANK0_BUILD,
             register: 0,
             trial: Trial::Confirms,

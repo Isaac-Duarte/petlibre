@@ -38,7 +38,9 @@ pub fn pending<I: SlotIo>(io: &I) -> bool {
 
 /// Program the mark, erasing first unless the sector is blank or already
 /// marked, and read it back. With a factory reset pending there is nothing to
-/// do: the next boot clears all of this and more.
+/// do: the next boot clears the Wi-Fi, plans and clients anyway. A factory
+/// reset keeps the update floor and the boot confirmation, so those stay; a
+/// promotion signed by the installer's own key above the floor still gets past.
 pub fn mark<I: SlotIo>(io: &I) -> bool {
     let mut bytes = [0; MARKER.len()];
     if !io.read(0, 0, &mut bytes) {

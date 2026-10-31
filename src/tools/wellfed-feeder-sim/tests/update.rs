@@ -273,6 +273,94 @@ fn an_update_gives_way_installs_from_bank_0_and_confirms() {
     });
 }
 
+/// A stock manifest and the statement that lets it past `floor`.
+fn stock_offer(device: &[u8; 32], floor: u32, build: u8, len: usize) -> (Offer, Vec<u8>) {
+    let key = bench();
+    let mut payload: Vec<u8> = (0..len).map(|i| (i % 241) as u8 ^ build).collect();
+    payload[..8].copy_from_slice(&MARKER);
+    let signed = Signed {
+        manifest: Manifest {
+            version: 3,
+            image_len: u32::try_from(len).unwrap(),
+            target_bank: 1,
+            image_sha256: Sha256::digest(&payload).into(),
+            build_id: [build; 32],
+        },
+        kind: ImageKind::Stock,
+        key_id: key_id(&key.verifying_key().to_bytes()),
+    };
+    let body = offer::manifest_body(&signed);
+    let mut manifest = body.to_vec();
+    manifest.extend_from_slice(&key.sign(&body).to_bytes());
+    let statement = offer::downgrade_body(
+        &key_id(&key.verifying_key().to_bytes()),
+        device,
+        &offer::manifest_digest(&manifest),
+        floor,
+    );
+    let mut downgrade = statement.to_vec();
+    downgrade.extend_from_slice(&key.sign(&statement).to_bytes());
+    (Offer { payload, manifest }, downgrade)
+}
+
+/// The whole way back and round again: a build confirmed at 376, a restore to
+/// stock, stock installing into bank 0 and the handover there, then the same
+/// build again. It runs a real trial and raises the floor to 376 again, while
+/// the stock manifest that went in stays refused as failed.
+#[test]
+fn a_build_reinstalled_after_stock_runs_a_trial_and_raises_the_floor_again() {
+    paused(async {
+        let mut rig = Rig::start().await;
+        rig.banks.borrow_mut().stock_reinstalls = true;
+        let build = Offer::new(376, 0x77, 2 * SECTOR);
+        update(&mut rig, build.image(), &mut Faults::default())
+            .await
+            .unwrap();
+        let mut connection = rig.open().await;
+        assert_eq!(rig.state(&mut connection).await.min_version, 376);
+        drop(connection);
+
+        let device = rig.sim.identity;
+        let (stock, statement) = stock_offer(&device, 376, 0x22, 2 * SECTOR);
+        let image = Image {
+            manifest: &stock.manifest,
+            downgrade: Some(&statement),
+            payload: &stock.payload,
+        };
+        update(&mut rig, image, &mut Faults::default())
+            .await
+            .unwrap();
+
+        assert_eq!(rig.bank().await, 0, "stock installed a build into bank 0");
+        let mut connection = rig.open().await;
+        let view = rig.state(&mut connection).await;
+        assert_eq!(view.min_version, 0, "the handover forgot the floor");
+        drop(connection);
+
+        let (_, statement) = stock_offer(&device, 0, 0x22, 2 * SECTOR);
+        let image = Image {
+            manifest: &stock.manifest,
+            downgrade: Some(&statement),
+            payload: &stock.payload,
+        };
+        assert_eq!(
+            update(&mut rig, image, &mut Faults::default()).await,
+            Err(InstallError::Refused(Refusal::Update(
+                UpdateRefusal::Failed
+            )))
+        );
+
+        update(&mut rig, build.image(), &mut Faults::default())
+            .await
+            .unwrap();
+        assert_eq!(rig.bank().await, 1);
+        let mut connection = rig.open().await;
+        assert_eq!(connection.build(), "77".repeat(32));
+        assert_eq!(rig.state(&mut connection).await.min_version, 376);
+        rig.sim.stop().await;
+    });
+}
+
 /// The stock backup's source: once bank 1 is left as stock leaves it after
 /// installing a build into bank 0, the bank-0 role streams it whole, byte
 /// for byte, the marker word stock programmed included. Bank 1 never serves its own

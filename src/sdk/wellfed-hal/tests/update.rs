@@ -954,6 +954,34 @@ fn starting_over_lets_the_same_version_install_again() {
     assert_eq!(store().record().min_version, 0);
 }
 
+/// Starting over keeps the no-retry record: stock that activated and never
+/// booted stays refused as failed, and a replacement still goes through,
+/// taking the record's place.
+#[test]
+fn starting_over_still_refuses_stock_that_activated_and_never_booted() {
+    let _guard = start(0);
+    let payload = image(LEN);
+    let (stock, statement) = stock_offer(&payload);
+    let mut s = store();
+    s.set_activated(Candidate {
+        digest: offer::manifest_digest(&stock),
+        version: 3,
+        build_id: [0x22; 32],
+        kind: ImageKind::Stock,
+    })
+    .unwrap();
+    s.start_over().unwrap();
+    let mut rig = Rig::bench(0);
+
+    assert_eq!(
+        rig.offer(&stock, Some(&statement)),
+        Err(Refused::Failed),
+        "the same stock manifest"
+    );
+    progress(rig.offer(&manifest(3, &payload), None));
+    assert!(matches!(store().record().state, State::Pending(_)));
+}
+
 #[test]
 fn a_replayed_version_needs_a_downgrade_statement_for_this_feeder_and_floor() {
     let _guard = start(0);

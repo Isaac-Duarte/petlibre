@@ -1895,8 +1895,8 @@ fn reset_boot(provider: &mut Provider, steps: Option<usize>) -> Vec<Record> {
             Some(Record::ResetDone { .. } | Record::Open { .. } | Record::HandoverDone { .. })
         ) {
             // Net, time, keys, events, stats and the stats save, or the
-            // handover's seven steps.
-            left = Some(7);
+            // handover's eight steps.
+            left = Some(8);
         }
         records.extend(record);
     }
@@ -2027,13 +2027,52 @@ fn a_handover_forgets_the_update_floor_and_an_ordinary_boot_does_not() {
     assert_eq!(floor(), 0);
 }
 
+/// Bank 0 forgets the confirmation in a handover, so a reinstall of the same
+/// build runs a real trial. Bank 1 keeps it: its next boot would otherwise run
+/// a trial with no Wi-Fi left to pass one. An ordinary boot leaves it alone.
+#[test]
+fn only_a_handover_on_bank_0_forgets_the_confirmation() {
+    use wellfed_core::ota::{self, CONFIRM_LEN};
+    use wellfed_hal::plaf103::storage;
+
+    let confirmed = ota::confirm_record(&[0x55; 32], 5);
+    let plant = || {
+        let at = storage::CONFIRM.first as usize * 0x1000;
+        fake::with(|h| h.storage[at..at + CONFIRM_LEN].copy_from_slice(&confirmed));
+    };
+    let held = || sectors(storage::CONFIRM)[..CONFIRM_LEN] == confirmed;
+
+    let (_guard, mut provider, _) = paired_with_wifi();
+    fake::with(|h| h.running_bank = Some(1));
+    plant();
+    plant_handover();
+    let records = reset_boot(&mut provider, None);
+    assert!(
+        records.contains(&Record::HandoverDone { cleared: true }),
+        "{records:?}"
+    );
+    assert!(held(), "bank 1 keeps its confirmation");
+
+    fake::with(|h| h.running_bank = Some(0));
+    reset_boot(&mut provider, None);
+    assert!(held(), "no mark, nothing forgotten");
+
+    plant_handover();
+    let records = reset_boot(&mut provider, None);
+    assert!(
+        records.contains(&Record::HandoverDone { cleared: true }),
+        "{records:?}"
+    );
+    assert!(sectors(storage::CONFIRM).iter().all(|&byte| byte == 0xff));
+}
+
 /// A cut at each step of the clearing leaves the mark, and the next boot does
 /// the whole of it, keeping the identity.
 #[test]
 fn a_cut_during_a_handover_repeats_it() {
     use wellfed_hal::plaf103::storage;
 
-    for cut in 1..8 {
+    for cut in 1..9 {
         let (guard, mut provider, identity) = paired_with_wifi();
         plant_handover();
 

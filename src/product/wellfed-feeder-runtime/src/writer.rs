@@ -109,6 +109,7 @@ use wellfed_feeder::feeder::platform::EventsFill;
 /// The factory reset's marker sector (`storage::RESET`).
 pub const RESET_BASE: u32 = wellfed_hal::plaf103::storage::RESET.first;
 const UPDATE_BASE: u32 = wellfed_hal::plaf103::storage::UPDATE.first;
+const CONFIRM_SECTOR: u32 = wellfed_hal::plaf103::storage::CONFIRM.first;
 
 pub const POLL_MS: u32 = 200;
 /// Between a factory reset's erases, each its own step and write turn.
@@ -1182,13 +1183,18 @@ impl<F: FlashOps> Writer<F> {
     }
 
     /// One step of the handover: the Wi-Fi's two sectors, the plans' two, the
-    /// clients, the update store's floor and candidate, then the mark, each
-    /// under its own write turn and attempt marker. A cut anywhere repeats it,
-    /// since the mark goes last. A build with Wi-Fi of its own is a bench image,
-    /// which pairs through the recovery window rather than Bluetooth, so it
-    /// keeps its Wi-Fi, plans and clients, but any image installed from stock
-    /// has to take the same version again. A step that fails leaves the mark
-    /// for the next boot, and this one serves what it has.
+    /// clients, the update store's floor, the boot confirmation, then the mark,
+    /// each under its own write turn and attempt marker. A cut anywhere repeats
+    /// it, since the mark goes last. A build with Wi-Fi of its own is a bench
+    /// image, which pairs through the recovery window rather than Bluetooth, so
+    /// it keeps its Wi-Fi, plans and clients, but any image installed from stock
+    /// has to take the same version again, and earn its floor with a real trial.
+    ///
+    /// Only bank 0 forgets the confirmation. KM0 never reads it for bank 0, so
+    /// a cut there changes nothing about the boot. On bank 1 this build's next
+    /// boot would run a trial, with the Wi-Fi it needs to pass just cleared,
+    /// and give way. A step that fails leaves the mark for the next boot, and
+    /// this one serves what it has.
     fn handover_step<H: Hooks>(&mut self) -> Step {
         let Some(step) = self.handing_over else {
             return next(POLL_MS, None);
@@ -1232,6 +1238,8 @@ impl<F: FlashOps> Writer<F> {
                 }
                 started
             }
+            6 if sdk::running_bank() != Some(0) => true,
+            6 => F::erase(CONFIRM_SECTOR) && blank::<F>(CONFIRM_SECTOR),
             _ => F::erase(RESET_BASE) && blank::<F>(RESET_BASE),
         };
         arming::clear_attempt();
@@ -1240,7 +1248,7 @@ impl<F: FlashOps> Writer<F> {
         if !done {
             return self.handover_end(Record::HandoverStopped { stage: step });
         }
-        if step < 6 {
+        if step < 7 {
             self.handing_over = Some(step + 1);
             return next(RESET_POLL_MS, None);
         }

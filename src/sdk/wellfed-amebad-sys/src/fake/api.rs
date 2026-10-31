@@ -156,6 +156,10 @@ pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
+pub fn running_bank() -> Option<u8> {
+    with(|h| h.running_bank)
+}
+
 fn bank1_span(sector: u32, offset: u32, len: usize) -> Option<usize> {
     let end = offset as usize + len;
     with(|h| h.running_bank == Some(0))

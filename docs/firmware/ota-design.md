@@ -153,7 +153,7 @@ The bench key stays in `private/ota-key.json`, for the bench only. An offline re
 - Sector 4's version field carries the version bank 0 activated. It is 0 for a build installed over UART, or after a torn confirmation rewrite (the store's candidate was already confirmed, so the retry finds nothing naming the build). Nothing decides on that field; the floor lives in the update store.
 
 **The update store** (`wellfed_core::store::update`, storage sectors 25–26) is one 256-byte record, A/B, newest valid wins. It holds the floor, the candidate (pending, then activated), the release slot's key, up to four retired ids, and bank 0's recorded image.
-- A record that would lower the floor or forget a retired id is never written, with one exception. The handover from stock's activation resets the floor to 0 and forgets the candidate, since an install from stock has to take the same version again. That also holds if the loader falls back to bank 0 because stock did not boot: the owner's signed downgrade already reopened the floor. The retired ids, the release slot's key and bank 0's recorded image stay.
+- A record that would lower the floor or forget a retired id is never written, with one exception. The handover from stock's activation resets the floor to 0, since an install from stock has to take the same version again. It keeps the candidate, so stock that activated and never booted stays refused as failed. That also holds if the loader falls back to bank 0 because stock did not boot: the owner's signed downgrade already reopened the floor. The retired ids, the release slot's key and bank 0's recorded image stay.
 - A torn write leaves the older, consistent record.
 - It is not the confirmation sector, which is erased before each write.
 - The factory reset leaves it alone.
@@ -171,7 +171,7 @@ A store bank 0 cannot read (a newer schema) has no floor it can trust, so bank 0
 KM0 runs the trial before it starts KM4 (`wellfed-hal-common/src/trial.rs`, `wellfed_trial_step` in `firstboot_km0.c`).
 
 - **Running bank:** read from bank 1's physical marker.
-- **Confirmation** is keyed by the build identity, not the image hash, since the running image does not know its own OTA hash. The record lives in storage sector 4 (`0x344000`). So reinstalling the build the record already names skips the trial: KM0 logs `PLTRL1 confirmed=1` straight after activation, and the build logs `PLCNF1 confirmed=1 already=1`. A test that needs a trial must install a build the record does not name.
+- **Confirmation** is keyed by the build identity, not the image hash, since the running image does not know its own OTA hash. The record lives in storage sector 4 (`0x344000`). So reinstalling the build the record already names skips the trial: KM0 logs `PLTRL1 confirmed=1` straight after activation, and the build logs `PLCNF1 confirmed=1 already=1`. A test that needs a trial must install a build the record does not name, or go through stock: the handover on bank 0 erases the record, so the same build runs a trial again.
 - **Count:** backup register 4.
 
   | Bits | Holds |

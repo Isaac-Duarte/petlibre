@@ -385,7 +385,9 @@ class _Handover extends StatelessWidget {
             lead: "This phone didn't join the feeder's network.",
             text:
                 'Its name starts with PL-AF103. It can take a minute to appear '
-                'after the reset. If it never does, hold Reset again.',
+                "after the reset. If this phone set it up in the vendor's app, "
+                "forget that network in the phone's Wi-Fi settings, then try "
+                'again. If it never appears, hold Reset again.',
           ),
         ],
         if (flow.restartAgain || flow.waitReason != null) ...[

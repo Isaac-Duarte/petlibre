@@ -16,7 +16,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Install over stock's own updater | Works | No soldering or UART needed. See [consumer installation](firmware/consumer-installation.md). |
 | Go back to stock over the air | Works | Using a stock image we serve. |
 | Guided installer (`wellfed install`) | Partial | Run from bank 0 with Bluetooth setup; not yet from stock |
-| Roll back to your feeder's own stock image | Partial | Run from the CLI and the app; a vendor app setup afterward has not been completed |
+| Roll back to your feeder's own stock image | Works | Run from the CLI and the app, then set up in the vendor's app; checked on the feeder once |
 | UART backup and recovery | Works | For developers. See [recovery](devices/plaf103/recovery.md). |
 | Updates over the air, with automatic rollback | Works | A new image that fails to start or hangs gives way to the previous one. |
 
@@ -59,7 +59,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | --- | --- | --- |
 | Command-line client (`wellfed`) | Partial | Every owner setting and action: pairing, status, settings, plans, the meal call, feeds, history, the desiccant reminder, lock, Wi-Fi, time, invites and the installer, with text for people and `--json` for scripts. The meal call, the desiccant reminder and the newer status fields are tested in simulation only. See [the command overview](../src/tools/README.md#the-wellfed-command-line). |
 | Self-hosted server | Partial | Optional: the app alone is the complete product, and the server adds long history, remote access, accounts, pets and food, and firmware releases. It has no web page of its own, and you use it through the CLI until the app connects to it. Adopts a real feeder and keeps its history whole across a server restart, a power cut and a Wi-Fi drop. A phone talking to the feeder directly gets no events while the server is connected. Feeds, plans with the next meal, accounts, releases and installs are tested in simulation only. |
-| Android app | Experimental | Installs from stock through the feeder's own Wi-Fi after a Reset hold, sets up a feeder over Bluetooth or takes it back over the LAN, and has a screen for everything the device API offers: meals, history, settings, people and invites, updates and diagnostics. Its install has run once on the research unit to the end; the other screens have run only against fakes and the simulator so far. It can put the vendor's firmware back from its backup, with a Dispense press at the feeder; that is simulated only so far. See [the app](../src/app/README.md). |
+| Android app | Experimental | Installs from stock through the feeder's own Wi-Fi after a Reset hold, sets up a feeder over Bluetooth or takes it back over the LAN, and has a screen for everything the device API offers: meals, history, settings, people and invites, updates and diagnostics. Its install and its return to the vendor's firmware have run end to end on the research unit several times, including from a feeder set up in the vendor's app. Its screens have run against that feeder, some only briefly. See [the app](../src/app/README.md). |
 | Desktop app (macOS and Linux) | Not started | The same app as Android, including the install. |
 | iPhone app | Not started | The same app, for setup and daily use. Whether it can install is an open question, so you would install from Android or a computer. |
 | Windows app | Not started | Waits for a machine to test it on. |

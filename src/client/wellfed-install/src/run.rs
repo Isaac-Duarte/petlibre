@@ -1248,7 +1248,7 @@ where
             bank: 0,
             note: format!(
                 "wellfed install: build {} answered from bank 0",
-                &build[..build.len().min(12)]
+                build.get(..12).unwrap_or(build)
             ),
         };
         let deadline = Instant::now() + CLOSE_WAIT;

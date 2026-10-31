@@ -211,6 +211,11 @@ pub struct TrialRecord {
     /// session the replacement's own key opened after it, resolves it.
     #[serde(default)]
     pub stock_reported: bool,
+    /// When a proven session's answer closed it. Stock reporting after that
+    /// reopens it, unless a restore put stock back ([`Self::restored_at`]).
+    pub answered_at: Option<DateTime<Utc>>,
+    /// When a restore activated stock on the feeder that answered.
+    pub restored_at: Option<DateTime<Utc>>,
 }
 
 /// What a trial was asked with.

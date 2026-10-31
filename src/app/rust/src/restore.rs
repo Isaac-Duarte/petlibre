@@ -269,10 +269,11 @@ fn run_on_this_thread(
     match runtime.block_on(restore(plan, platform, stopped(stop))) {
         Ok(Restored::Activated) => {
             // Stock is going back, so nothing else will say what became of a
-            // trial this feeder's build already answered for.
+            // trial this feeder's build already answered for, and its next
+            // report must not read as a request that never left stock.
             if let Some(data) = backups.parent() {
                 let config = data.join(CONFIG);
-                let _ = wellfed_install::stock::settle_answered(&config, &backups, &identity);
+                let _ = wellfed_install::stock::feeder_restored(&config, &backups, &identity);
             }
             RestoreEnd::Activated
         }

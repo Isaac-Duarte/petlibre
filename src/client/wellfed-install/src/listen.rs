@@ -27,9 +27,11 @@ use wellfed_stock::server::{self, Api, Handle, OtaTrial, Server};
 use crate::Error;
 use crate::track::{Stop, Stopped};
 
-/// How long an uncertain request is listened for: the stock server's ledger
-/// resolves one no sooner than 20 minutes after it went out.
-pub const UNCERTAIN_WAIT: Duration = Duration::from_secs(20 * 60);
+/// How long an uncertain request is listened for. The stock server's ledger
+/// resolves one no sooner than 20 minutes after it went out, and only 10 quiet
+/// minutes into a session that reported, so a stock that connects or drops as
+/// late as the 20th minute still has its 10.
+pub const UNCERTAIN_WAIT: Duration = Duration::from_secs(30 * 60);
 
 /// How often the listener looks.
 const POLL: Duration = Duration::from_secs(5);
@@ -215,6 +217,8 @@ mod tests {
             image_sha256: String::new(),
             build: None,
             stock_reported: false,
+            answered_at: None,
+            restored_at: None,
         }
     }
 

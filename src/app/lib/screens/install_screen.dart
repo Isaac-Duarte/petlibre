@@ -922,10 +922,18 @@ class _Stopped extends StatelessWidget {
 
   (String, String) _words(StopCase stop) => switch (stop) {
     StopCase_Uncertain() => switch (flow.listening) {
-      Listening.stockStayed => (
+      Listening.stockStayed when flow.stop?.resume == Resume.fromStart => (
         "It didn't install",
         'The feeder came back on its original firmware, and nothing changed '
-            'on it.',
+            'on it. You can start again.',
+      ),
+      Listening.stockStayed => (
+        'A new install has to wait',
+        'The feeder is on its original firmware, but it has not stayed connected '
+            'long enough to rule out the earlier install. A new one isn\'t '
+            'possible until it has stayed connected to this phone for 10 minutes '
+            'without a break. Leave it plugged in, keep Wellfed open and listen '
+            'again.',
       ),
       Listening.silent => (
         'Still no word from the feeder',
@@ -949,7 +957,7 @@ class _Stopped extends StatelessWidget {
         "We don't know yet if it installed",
         'The feeder stopped answering partway through. That can be normal '
             'while it restarts. Leave it plugged in. Wellfed listens for up '
-            'to 20 minutes and never sends the install a second time.',
+            'to 30 minutes and never sends the install a second time.',
       ),
     },
     StopCase_UncertainWrite(:final write) => (
@@ -1213,7 +1221,8 @@ class _Stopped extends StatelessWidget {
           primary('Start again', () => unawaited(flow.again())),
         ],
         Listening.stockStayed => [
-          secondary('Listen again', () => unawaited(flow.listen())),
+          primary('Listen again', () => unawaited(flow.listen())),
+          const SizedBox(height: Space.s2),
           home(),
         ],
         _ => [

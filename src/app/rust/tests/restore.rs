@@ -342,8 +342,10 @@ fn a_restore_s_activation_closes_a_trial_its_build_answered_for() {
         std::fs::create_dir_all(&answered).unwrap();
         std::fs::write(
             answered.join("answered.json"),
-            serde_json::to_vec(&serde_json::json!({"device": "AF_A", "build": "cd", "at": at}))
-                .unwrap(),
+            serde_json::to_vec(
+                &serde_json::json!({"device": "AF_A", "build": "cd", "sequence": 1}),
+            )
+            .unwrap(),
         )
         .unwrap();
         assert!(wellfed_install::stock::open_request(&config));
@@ -363,5 +365,9 @@ fn a_restore_s_activation_closes_a_trial_its_build_answered_for() {
 
         assert_eq!(end, RestoreEnd::Activated);
         assert!(!wellfed_install::stock::open_request(&config));
+        let ledger = wellfed_install::stock::ledger_path(&config, "AF_A").unwrap();
+        let ledger: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(ledger).unwrap()).unwrap();
+        assert!(!ledger["ota_trials"][id.to_string()]["restored_at"].is_null());
     });
 }

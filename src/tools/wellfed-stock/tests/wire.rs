@@ -164,6 +164,8 @@ fn commands() {
         image_sha256: DIGEST.into(),
         build: None,
         stock_reported: false,
+        answered_at: None,
+        restored_at: None,
     };
     let upgrade = ota::trial::command(&trial, &config);
     assert_eq!(upgrade.topic, config.topic("service/sub"));

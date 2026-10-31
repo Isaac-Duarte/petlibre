@@ -150,18 +150,34 @@ pub fn open_request(config_path: &Path) -> Result<bool> {
     }))
 }
 
-/// Close `device`'s latest open trial: the replacement answered with its build
-/// at `answered_at`, after the request went out, in a session only that
-/// feeder's key can open. Stock is not what answered, so this goes by a
-/// proven session where [`Controller::replacement_answered`] takes a client's
-/// word: a stock that reported after the request does not hold it open. Sends
-/// nothing. Reads and writes the ledger alone, and fails while a server owns
-/// it. Whether a trial closed.
+/// The sequence of `device`'s latest trial, which an answer seen now is about.
+/// A later trial has a higher one, whatever the clock says. Reads the ledger only.
+pub fn latest_sequence(config_path: &Path, device: &str) -> Result<Option<usize>> {
+    let path = ledger_path(config_path, device)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let ledger: Ledger =
+        serde_json::from_slice(&fs::read(&path)?).context("invalid stock ledger")?;
+    Ok(ledger.ota_trials.values().map(|r| r.sequence).max())
+}
+
+/// Close `device`'s latest trial if it is the open one `sequence` names: the
+/// replacement answered with its build, in a session only the paired feeder's
+/// key can open. Stock is not what answered, so this goes by a proven session
+/// where [`Controller::replacement_answered`] takes a client's word: a stock
+/// that reported earlier does not hold it open. What it cannot prove is that
+/// the paired feeder is the one that took the request, since nothing a
+/// replacement reports ties it to stock's device ID, so a later report from
+/// stock reopens the trial unless that stock came back by a restore
+/// ([`stock_restored`], [`Controller::observe`]). Sends nothing. Reads and
+/// writes the ledger alone, and fails while a server owns it. Whether a trial
+/// closed.
 pub fn close_answered(
     config_path: &Path,
     device: &str,
     build: &str,
-    answered_at: DateTime<Utc>,
+    sequence: usize,
     note: String,
 ) -> Result<bool> {
     let path = ledger_path(config_path, device)?;
@@ -174,16 +190,44 @@ pub fn close_answered(
     let Some(record) = ledger.ota_trials.values_mut().max_by_key(|r| r.sequence) else {
         return Ok(false);
     };
-    if !matches!(record.phase, TrialPhase::Submitted | TrialPhase::Uncertain)
+    if record.sequence != sequence
+        || !matches!(record.phase, TrialPhase::Submitted | TrialPhase::Uncertain)
         || record.build.as_deref() != Some(build)
-        || answered_at <= record.created_at
     {
         return Ok(false);
     }
 
+    let now = Utc::now();
     record.phase = TrialPhase::ReplacementHealthy;
     record.resolution_note = Some(note);
-    record.updated_at = Utc::now();
+    record.answered_at = Some(now);
+    record.updated_at = now;
+    storage::write_json(&path, &ledger)?;
+    Ok(true)
+}
+
+/// A restore activated stock on the feeder that answered for the closed trial
+/// `sequence`, so the stock that reports next is that one coming back, and not
+/// a sign that the request never left stock. Fails while a server owns the
+/// ledger. Whether it marked a trial.
+pub fn stock_restored(config_path: &Path, device: &str, sequence: usize) -> Result<bool> {
+    let path = ledger_path(config_path, device)?;
+    if !path.exists() {
+        return Ok(false);
+    }
+    let _lease = storage::lock(&path)?;
+    let mut ledger: Ledger =
+        serde_json::from_slice(&fs::read(&path)?).context("invalid stock ledger")?;
+    let Some(record) = ledger.ota_trials.values_mut().max_by_key(|r| r.sequence) else {
+        return Ok(false);
+    };
+    if record.sequence != sequence || record.phase != TrialPhase::ReplacementHealthy {
+        return Ok(false);
+    }
+
+    let now = Utc::now();
+    record.restored_at = Some(now);
+    record.updated_at = now;
     storage::write_json(&path, &ledger)?;
     Ok(true)
 }
@@ -196,6 +240,11 @@ pub struct Controller {
     storage_failed: bool,
     /// Start of the current interval with fresh feeder telemetry and no OTA report.
     ota_quiet_since: DateTime<Utc>,
+    /// Start of the current session's unbroken telemetry. A version report since
+    /// then still speaks for the stock now connected: one still in that session
+    /// cannot have installed, and stock reports its version only around a
+    /// connect, so no fresher report will come.
+    telemetry_since: DateTime<Utc>,
     _lease: fs::File,
 }
 
@@ -237,6 +286,7 @@ impl Controller {
             },
             storage_failed: false,
             ota_quiet_since: Utc::now(),
+            telemetry_since: Utc::now(),
             _lease: lease,
         };
 
@@ -258,6 +308,7 @@ impl Controller {
     fn check_observation_interval(&mut self, now: DateTime<Utc>) {
         if !self.telemetry_current(now) || self.ota_quiet_since > now {
             self.ota_quiet_since = now;
+            self.telemetry_since = now;
         }
     }
 
@@ -275,6 +326,7 @@ impl Controller {
     pub fn connected(&mut self, now: DateTime<Utc>) {
         self.status.broker_connected = true;
         self.ota_quiet_since = now;
+        self.telemetry_since = now;
     }
 
     pub fn disconnected(&mut self, now: DateTime<Utc>) -> Result<()> {
@@ -404,6 +456,8 @@ impl Controller {
             image_sha256,
             build,
             stock_reported: false,
+            answered_at: None,
+            restored_at: None,
         };
 
         // Saved before the command is returned for publishing, so a crash
@@ -512,6 +566,7 @@ impl Controller {
             .max_by_key(|r| r.sequence)
             .map(|r| r.input.request_id);
         let quiet = (now - self.ota_quiet_since).num_seconds() >= QUIET_SECONDS;
+        let telemetry_since = self.telemetry_since;
         let status = &self.status;
         let record = self
             .ledger
@@ -527,10 +582,9 @@ impl Controller {
 
         let evidence = latest == Some(request.request_id)
             && status.device_online
-            && Self::fresh(status.version_reported_at, now)
             && status
                 .version_reported_at
-                .is_some_and(|seen| seen > record.created_at)
+                .is_some_and(|seen| seen >= telemetry_since && seen > record.created_at)
             && (now - record.created_at).num_seconds() >= RESOLVE_AFTER_SECONDS
             && quiet;
 
@@ -630,6 +684,27 @@ impl Controller {
         else {
             return false;
         };
+        // Closed on a replacement's answer, with no restore since, yet stock is
+        // reporting: the feeder that answered was not the one that took the
+        // request, or stock came back some way this ledger did not hear of.
+        // Only the version evidence below can tell, so it goes back to open.
+        if trial.phase == TrialPhase::ReplacementHealthy
+            && trial.answered_at.is_some()
+            && trial.restored_at.is_none()
+            && now > trial.created_at
+            && message
+                .report
+                .software_version
+                .as_deref()
+                .is_some_and(|version| version != REPLACEMENT_VERSION)
+        {
+            trial.phase = TrialPhase::Uncertain;
+            trial.stock_reported = true;
+            trial.answered_at = None;
+            trial.resolution_note = None;
+            trial.updated_at = now;
+            return true;
+        }
         if matches!(
             trial.phase,
             TrialPhase::VersionReported | TrialPhase::ReplacementHealthy

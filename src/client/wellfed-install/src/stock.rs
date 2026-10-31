@@ -116,34 +116,54 @@ pub fn feeder_answered(
         return Ok(false);
     };
 
+    let sequence = wellfed_stock::controller::latest_sequence(config, &device)
+        .map_err(|error| Error::StockServer(error.into()))?;
     crate::storage::Answered {
         device,
         build: build.to_string(),
-        at: chrono::Utc::now(),
+        sequence,
     }
     .keep(backups, identity)?;
     settle_answered(config, backups, identity)
 }
 
-/// Close the trial the feeder with `identity` was last seen answering for, if
-/// it is still open and the answer came after it: at the end of a run, whose
-/// server held the ledger, and at a restore's activation.
+/// Close the trial the feeder with `identity` last answered about, if it is
+/// still open: at the end of a run, whose server held the ledger, and at a
+/// restore's activation.
 pub fn settle_answered(config: &Path, backups: &Path, identity: &[u8; 32]) -> Result<bool, Error> {
     let Some(answered) = crate::storage::Answered::load(backups, identity)? else {
         return Ok(false);
     };
+    let Some(sequence) = answered.sequence else {
+        return Ok(false);
+    };
     let note = format!(
         "build {} answered from this feeder's key",
-        &answered.build[..answered.build.len().min(12)]
+        answered.build.get(..12).unwrap_or(&answered.build)
     );
     wellfed_stock::controller::close_answered(
         config,
         &answered.device,
         &answered.build,
-        answered.at,
+        sequence,
         note,
     )
     .map_err(|error| Error::StockServer(error.into()))
+}
+
+/// A restore activated stock on the feeder with `identity`: settle the trial it
+/// answered about, and say stock is coming back, so its next report does not
+/// reopen that trial.
+pub fn feeder_restored(config: &Path, backups: &Path, identity: &[u8; 32]) -> Result<(), Error> {
+    settle_answered(config, backups, identity)?;
+    let Some(answered) = crate::storage::Answered::load(backups, identity)? else {
+        return Ok(());
+    };
+    if let Some(sequence) = answered.sequence {
+        wellfed_stock::controller::stock_restored(config, &answered.device, sequence)
+            .map_err(|error| Error::StockServer(error.into()))?;
+    }
+    Ok(())
 }
 
 /// Why the server's status is not there to read.
@@ -590,6 +610,8 @@ mod tests {
                 image_sha256: String::new(),
                 build: None,
                 stock_reported: false,
+                answered_at: None,
+                restored_at: None,
             }],
             ota_reports: vec![
                 report(150, Some(&id.to_string()), 40),

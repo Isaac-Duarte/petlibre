@@ -801,7 +801,8 @@ void main() {
         );
         await settle(tester);
 
-        expect(find.text("It didn't install"), findsOneWidget);
+        expect(find.text('A new install has to wait'), findsOneWidget);
+        expect(find.text("It didn't install"), findsNothing);
         expect(find.text('Start again'), findsNothing);
         await _tap(tester, 'Listen again');
         expect(ports.listeners, hasLength(2));

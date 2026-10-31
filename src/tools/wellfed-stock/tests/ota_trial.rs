@@ -605,7 +605,7 @@ fn a_failed_install_does_not_close_on_an_answer() {
 }
 
 #[test]
-fn an_uncertain_install_resolves_only_after_a_quiet_period_with_fresh_version_evidence() {
+fn an_uncertain_install_resolves_only_after_a_quiet_period_with_version_evidence() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = enabled(&dir);
 
@@ -647,15 +647,8 @@ fn an_uncertain_install_resolves_only_after_a_quiet_period_with_fresh_version_ev
         Err(Rejection::ResolutionEvidence)
     ));
 
-    // Stale version evidence is refused.
     keep_connected(&mut c, t0 + Duration::minutes(31));
-    assert!(matches!(
-        c.resolve_trial(resolve(request.request_id), t0 + Duration::minutes(31)),
-        Err(Rejection::ResolutionEvidence)
-    ));
-
     let at = t0 + Duration::minutes(31);
-    observe(&mut c, "system", config, at);
 
     let blank = ResolveInput {
         request_id: request.request_id,
@@ -675,6 +668,12 @@ fn an_uncertain_install_resolves_only_after_a_quiet_period_with_fresh_version_ev
         c.resolve_trial(resolve(request.request_id), at),
         Err(Rejection::Conflict)
     ));
+    // A new request wants a fresh report, which an old session's does not give.
+    assert!(matches!(
+        submit(&mut c, input(), at),
+        Err(Rejection::InvalidOta)
+    ));
+    observe(&mut c, "system", config, at);
     assert!(submit(&mut c, input(), at).unwrap().1.is_some());
 }
 
@@ -854,49 +853,154 @@ fn a_trial_open_under_a_captured_config_refuses_the_same_device_through_an_insta
     ));
 }
 
-/// The ledger alone: a proven answer after the request closes it even with stock
-/// marked as having reported, and nothing else does.
-#[test]
-fn only_a_later_answer_with_the_trial_s_build_closes_it() {
-    let dir = tempfile::tempdir().unwrap();
+/// A ledger where this file's feeder has one trial out, nothing running.
+fn trial_out(dir: &tempfile::TempDir) -> (std::path::PathBuf, String) {
     let config = dir.path().join("installer.json");
-    let device = "AF_A";
-    let path = wellfed_stock::controller::ledger_path(&config, device).unwrap();
-    let (id, created) = (uuid::Uuid::from_u128(7), Utc::now() - Duration::seconds(60));
-    let write = |stock_reported: bool, phase: &str| {
-        let record = json!({
-            "device_id": device,
-            "ota_trials": { id.to_string(): {
-                "sequence": 1,
-                "input": {"request_id": id, "server_token": id},
-                "created_at": created, "updated_at": created,
-                "phase": phase, "download_reported": true,
-                "resolution_note": null, "image_sha256": "ab".repeat(32),
-                "build": "cd", "stock_reported": stock_reported,
-            }},
-        });
-        std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
-    };
-    let close = |build: &str, at| {
-        wellfed_stock::controller::close_answered(&config, device, build, at, "seen".into())
-            .unwrap()
+    let device = common::config().device_id;
+    let path = wellfed_stock::controller::ledger_path(&config, &device).unwrap();
+    let mut c = common::load(path).unwrap();
+    ready(&mut c, "1.1.15");
+    c.enable_ota_trial();
+    submit(&mut c, input(), Utc::now()).unwrap();
+    drop(c);
+    (config, device)
+}
+
+fn reopened(config: &std::path::Path, device: &str) -> Controller {
+    let path = wellfed_stock::controller::ledger_path(config, device).unwrap();
+    let mut c = common::load(path).unwrap();
+    c.enable_ota_trial();
+    c
+}
+
+/// A proven answer about the latest trial closes it, even with stock marked as
+/// having reported, and nothing else does.
+#[test]
+fn only_an_answer_about_the_latest_trial_with_its_build_closes_it() {
+    use wellfed_stock::controller::{close_answered, latest_sequence};
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config, device) = trial_out(&dir);
+    let sequence = latest_sequence(&config, &device).unwrap().unwrap();
+    let close = |build: &str, sequence| {
+        close_answered(&config, &device, build, sequence, "seen".into()).unwrap()
     };
 
-    write(true, "uncertain");
-    assert!(!close("other", Utc::now()), "another build");
+    let mut c = reopened(&config, &device);
+    ready(&mut c, "1.1.15");
+    assert!(c.status.ota_trials[0].stock_reported);
+    drop(c);
+
+    assert!(!close("other", sequence), "another build");
     assert!(
-        !close("cd", created - Duration::seconds(1)),
-        "an answer from before the request is about an earlier install"
+        !close(&served(), sequence - 1),
+        "an answer from before this trial is about an earlier install"
     );
     assert!(
-        close("cd", Utc::now()),
+        close(&served(), sequence),
         "stock's report does not hold it open"
     );
-    assert!(!close("cd", Utc::now()), "closed once");
+    assert!(!close(&served(), sequence), "closed once");
+}
 
-    write(false, "reported_error");
-    assert!(
-        !close("cd", Utc::now()),
-        "a reported failure takes its resolution"
+/// What tells a second feeder's answer from the round trip. Both end with stock
+/// reporting after a closed trial; only a restore this ledger heard of says that
+/// stock came back, so with none the trial reopens before a request can go.
+#[test]
+fn stock_reporting_after_an_answer_reopens_the_trial_unless_a_restore_said_so() {
+    use wellfed_stock::controller::{close_answered, latest_sequence, stock_restored};
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config, device) = trial_out(&dir);
+    let sequence = latest_sequence(&config, &device).unwrap().unwrap();
+    assert!(close_answered(&config, &device, &served(), sequence, "seen".into()).unwrap());
+
+    let mut c = reopened(&config, &device);
+    ready(&mut c, "1.1.15");
+    assert_eq!(c.status.ota_trials[0].phase, Phase::Uncertain);
+    assert_eq!(
+        submit(&mut c, input(), Utc::now()).map(|_| ()),
+        Err(Rejection::OtaActive)
     );
+    drop(c);
+
+    // The same feeder, this time restored: stock's report leaves it closed, and
+    // the second request goes out.
+    let dir = tempfile::tempdir().unwrap();
+    let (config, device) = trial_out(&dir);
+    let sequence = latest_sequence(&config, &device).unwrap().unwrap();
+    assert!(close_answered(&config, &device, &served(), sequence, "seen".into()).unwrap());
+    assert!(stock_restored(&config, &device, sequence).unwrap());
+
+    let mut c = reopened(&config, &device);
+    ready(&mut c, "1.1.15");
+    assert_eq!(c.status.ota_trials[0].phase, Phase::ReplacementHealthy);
+    assert!(submit(&mut c, input(), Utc::now()).is_ok());
+}
+
+/// Stock reports its version only around a connect. One still in that session,
+/// its telemetry unbroken, cannot have installed, so that report still speaks at
+/// the quiet mark, long past the 300 s a new request wants.
+#[test]
+fn a_report_holds_through_an_unbroken_session_and_not_past_a_drop() {
+    let report = json!({"cmd":"ATTR_PUSH_EVENT","softwareVersion":"1.1.15","powerType":1});
+    let start = |dir: &tempfile::TempDir, t0: DateTime<Utc>| {
+        let mut c = enabled(dir);
+        c.connected(t0);
+        ready(&mut c, "1.1.15");
+        let request = input();
+        let sent = Utc::now();
+        submit(&mut c, request.clone(), sent).unwrap();
+        c.disconnected(sent + Duration::seconds(10)).unwrap();
+        (c, request)
+    };
+    let t0 = Utc::now();
+    let connect_at = t0 + Duration::minutes(25);
+
+    // Unbroken: the report at connect is 10 minutes old at the quiet mark.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut c, request) = start(&dir, t0);
+    c.connected(connect_at);
+    observe(&mut c, "event", report.clone(), connect_at);
+    let before = connect_at + Duration::minutes(9);
+    keep_connected(&mut c, before);
+    assert!(matches!(
+        c.resolve_trial(resolve(request.request_id), before),
+        Err(Rejection::ResolutionEvidence)
+    ));
+    let mark = connect_at + Duration::minutes(10);
+    keep_connected(&mut c, mark);
+    let record = c.resolve_trial(resolve(request.request_id), mark).unwrap();
+    assert_eq!(record.phase, Phase::NotInstalled);
+
+    // A dropped session voids it, whatever quiet time follows, until a new one.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut c, request) = start(&dir, t0);
+    c.connected(connect_at);
+    observe(&mut c, "event", report.clone(), connect_at);
+    let dropped = connect_at + Duration::minutes(5);
+    keep_connected(&mut c, dropped);
+    c.disconnected(dropped).unwrap();
+    c.connected(dropped);
+    observe(&mut c, "heart", json!({"cmd":"HEARTBEAT"}), dropped);
+    let later = dropped + Duration::minutes(11);
+    keep_connected(&mut c, later);
+    assert!(matches!(
+        c.resolve_trial(resolve(request.request_id), later),
+        Err(Rejection::ResolutionEvidence)
+    ));
+
+    // So does a gap in its telemetry with the session still up.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut c, request) = start(&dir, t0);
+    c.connected(connect_at);
+    observe(&mut c, "event", report, connect_at);
+    let gap = connect_at + Duration::minutes(5);
+    observe(&mut c, "heart", json!({"cmd":"HEARTBEAT"}), gap);
+    let later = gap + Duration::minutes(11);
+    keep_connected(&mut c, later);
+    assert!(matches!(
+        c.resolve_trial(resolve(request.request_id), later),
+        Err(Rejection::ResolutionEvidence)
+    ));
 }

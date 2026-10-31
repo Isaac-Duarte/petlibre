@@ -164,6 +164,8 @@ The server sends nothing, and closes only the latest submitted or uncertain tria
 
 A proven session closes a trial too, with neither condition about stock. When a feeder this phone or computer paired from stock answers its own key's session with the trial's build, after the request, the installer records that answer beside the feeder's backups and closes the latest submitted or uncertain trial in the ledger: on any run that reads the feeder's status, a pick-up included, when a session opens from Home, and at a restore's activation. A trial no such session answered stays open.
 
+Nothing a replacement reports ties it to stock's device ID, so that session cannot prove it is the feeder that took the request. A second feeder in setup on the same build could answer instead. So stock reporting after such a close reopens the trial as uncertain, for the version evidence above to resolve, unless the app's restore activated stock on that feeder first and marked the trial. The evidence's version report holds while stock stays in the session that sent it with its telemetry unbroken, since a stock still in that session cannot have installed, and it reports its version only around a connect; a dropped session or a telemetry gap voids it until a new one. A restore this ledger did not hear of, from the CLI or another phone, waits for that evidence too.
+
 The answer through the API is still the client's word. The server checks it against what it served, not against the device API itself. `wellfed-itest`'s bank-0 step asks for 120 s, past stock's telemetry window.
 
 Operation with a nonempty plan, and stock's time-recovery behavior, are unvalidated; see [stock behavior](../devices/plaf103/stock/README.md).

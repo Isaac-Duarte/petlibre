@@ -162,14 +162,15 @@ impl Paired {
 
 /// A feeder's proven session answered with this build: the evidence that closes
 /// the stock trial that installed it, kept with the feeder because a trial can
-/// outlive the run that saw the answer. It stays, since only its time says
-/// whether a later trial came after it.
+/// outlive the run that saw the answer. It names the trial it is about, so a
+/// later trial never closes on it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Answered {
     /// Stock's device ID, as the installer's broker enrolled it.
     pub(crate) device: String,
     pub(crate) build: String,
-    pub(crate) at: chrono::DateTime<chrono::Utc>,
+    /// The device's latest trial when the answer came; `None` with none yet.
+    pub(crate) sequence: Option<usize>,
 }
 
 impl Answered {

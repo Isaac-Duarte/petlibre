@@ -173,9 +173,9 @@ mod tests {
             Some("feed 7  by feeder  2 to 3 of 3 portions, uncertain (output)")
         );
 
-        let empty = fed_event(FeedOutcome::Done, 3, FeedReason::Done, FoodLevel::Low);
+        let low = fed_event(FeedOutcome::Done, 3, FeedReason::Done, FoodLevel::Low);
         assert_eq!(
-            fed(&empty, 7).as_deref(),
+            fed(&low, 7).as_deref(),
             Some("feed 7  by feeder  3 of 3 portions, done (done)  food read low")
         );
     }

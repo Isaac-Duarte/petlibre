@@ -408,7 +408,9 @@ class FeederCard extends StatelessWidget {
         Notice(
           tone: Tone.fault,
           lead: _lowLead(context, card),
-          text: 'About five portions remain. Refill it soon.',
+          text:
+              'Refill it soon. A meal can run short from here, so check the '
+              'bowl if your pet seems hungry.',
         ),
       if (why != null) Notice(tone: Tone.neutral, text: why),
     ];

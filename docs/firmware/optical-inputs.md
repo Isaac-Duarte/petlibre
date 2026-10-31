@@ -57,7 +57,7 @@ The image runs plan 2, whose longer windows suit meter readings. Its start recor
 
 A window's records are logged at least 300 ms into the next window, so logging never delays settling samples.
 
-A passing run has the planned sequence and timing, every gap within the filter's 100 ms limit, `stopped=1` throughout, a cut 300–340 ms after the last renewal with the OWNER fault, and the supervisor closed. An unattended run also needs the same inputs lit by each selection in every cycle. A blocking run needs the operator's blocking seen through the filter: food both present and empty, and the outlet both clear and blocked.
+A passing run has the planned sequence and timing, every gap within the filter's 100 ms limit, `stopped=1` throughout, a cut 300–340 ms after the last renewal with the OWNER fault, and the supervisor closed. An unattended run also needs the same inputs lit by each selection in every cycle. A blocking run needs the operator's blocking seen through the filter: food both present and low, and the outlet both clear and blocked.
 
 ## Limits
 

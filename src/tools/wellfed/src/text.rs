@@ -48,12 +48,12 @@ fn source(by: Option<Source>) -> String {
 /// One feed's number, source, portions and ending, as `wellfed feeds`, the
 /// events and the feed's own result line all show it.
 pub(crate) fn fed(feed: &Feed) -> String {
-    let empty = match feed.hopper {
+    let low = match feed.hopper {
         FoodLevel::Low => "  food read low",
         FoodLevel::Unread | FoodLevel::Present => "",
     };
     format!(
-        "feed {}  by {}  {} ({}){empty}",
+        "feed {}  by {}  {} ({}){low}",
         feed.feed,
         source(feed.by),
         feed.delivered.describe(feed.requested, feed.outcome),

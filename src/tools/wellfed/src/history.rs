@@ -426,15 +426,15 @@ mod tests {
     }
 
     #[test]
-    fn a_feed_that_read_the_hopper_empty_says_so() {
-        let Entry::Feed(mut empty) = feed(None, FeedOutcome::Done, FeedReason::Done, Source::Panel)
+    fn a_feed_that_read_the_hopper_low_says_so() {
+        let Entry::Feed(mut low) = feed(None, FeedOutcome::Done, FeedReason::Done, Source::Panel)
         else {
             unreachable!("feed builds a feed")
         };
-        empty.hopper = FoodLevel::Low;
+        low.hopper = FoodLevel::Low;
 
         assert!(
-            line(&Entry::Feed(empty), &TimeZone::UTC)
+            line(&Entry::Feed(low), &TimeZone::UTC)
                 .ends_with("1 of 3 portions, done (done)  food read low")
         );
     }

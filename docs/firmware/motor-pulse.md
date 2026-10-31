@@ -31,7 +31,7 @@ Each feed logs, in order:
 1. `PLOWN1 feed id= portions= submit=0`.
 2. The state changes: `state=3` preparing, `4` feeding, `5` reporting, `6` terminal, `1` idle.
 3. `PLOWN1 fed id= requested= completed= outcome= reason= durable= drive_ms= rising= falling=`: the result, and how long the drive ran. `rising` and `falling` count every PA18 edge while capture was on, qualified or not.
-4. `PLOWN1 current id= first_edge_ms= current_max= current_mean= samples= reversals= hopper=`: the rest of what the drive measured. `reversals` counts the jam handling's reverse attempts, and `hopper` is what the food beam read (`present`, `empty` or `unread`). It is a line of its own because the log drops a line longer than 191 bytes with its CRLF, and the two together would not fit.
+4. `PLOWN1 current id= first_edge_ms= current_max= current_mean= samples= reversals= hopper=`: the rest of what the drive measured. `reversals` counts the jam handling's reverse attempts, and `hopper` is what the food beam read (`present`, `low` or `unread`). It is a line of its own because the log drops a line longer than 191 bytes with its CRLF, and the two together would not fit.
 5. `PLOWN1 edges id=…`, with each edge's time.
 6. `PLOWN1 steps id= max_gap_ms= handshakes=`: the longest gap between two owner steps while the feed was in flight, which must stay under the 100 ms observation gap, and the handshake operations the loop ran meanwhile.
 7. `PLOWN1 marks id=N homed_ms=… outlet_breaks=… phase=at_mark|unknown` ([calibration](calibration.md)).

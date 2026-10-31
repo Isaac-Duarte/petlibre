@@ -343,7 +343,7 @@ fn a_restore_s_activation_closes_a_trial_its_build_answered_for() {
         std::fs::write(
             answered.join("answered.json"),
             serde_json::to_vec(
-                &serde_json::json!({"device": "AF_A", "build": "cd", "sequence": 1}),
+                &serde_json::json!({"config": config, "device": "AF_A", "build": "cd", "sequence": 1}),
             )
             .unwrap(),
         )

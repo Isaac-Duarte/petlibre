@@ -119,6 +119,9 @@ pub fn feeder_answered(
     let sequence = wellfed_stock::controller::latest_sequence(config, &device)
         .map_err(|error| Error::StockServer(error.into()))?;
     crate::storage::Answered {
+        config: config
+            .canonicalize()
+            .unwrap_or_else(|_| config.to_path_buf()),
         device,
         build: build.to_string(),
         sequence,
@@ -154,13 +157,13 @@ pub fn settle_answered(config: &Path, backups: &Path, identity: &[u8; 32]) -> Re
 /// A restore activated stock on the feeder with `identity`: settle the trial it
 /// answered about, and say stock is coming back, so its next report does not
 /// reopen that trial.
-pub fn feeder_restored(config: &Path, backups: &Path, identity: &[u8; 32]) -> Result<(), Error> {
-    settle_answered(config, backups, identity)?;
+pub(crate) fn feeder_restored(backups: &Path, identity: &[u8; 32]) -> Result<(), Error> {
     let Some(answered) = crate::storage::Answered::load(backups, identity)? else {
         return Ok(());
     };
+    settle_answered(&answered.config, backups, identity)?;
     if let Some(sequence) = answered.sequence {
-        wellfed_stock::controller::stock_restored(config, &answered.device, sequence)
+        wellfed_stock::controller::stock_restored(&answered.config, &answered.device, sequence)
             .map_err(|error| Error::StockServer(error.into()))?;
     }
     Ok(())

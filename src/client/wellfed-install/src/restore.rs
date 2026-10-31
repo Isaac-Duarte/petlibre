@@ -91,11 +91,6 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// The feeder this restore is for, and where its records are.
-    pub fn target(&self) -> (&[u8; 32], &Path) {
-        (&self.target.identity, &self.target.backups)
-    }
-
     /// Restore `backup` as the stock image: only the pinned container passes.
     pub fn new(backup: &StockBackup, target: Target) -> Result<Self, Error> {
         Ok(Self {
@@ -305,7 +300,14 @@ async fn drive(
     .await?;
 
     match pushed {
-        Pushed::Activated | Pushed::AlreadyRunning => Ok(Restored::Activated),
+        Pushed::Activated | Pushed::AlreadyRunning => {
+            // Stock is going back, so nothing else will say what became of a
+            // trial this feeder's build already answered for, and its next
+            // report must not read as a request that never left stock. A
+            // failure leaves that trial to its version evidence.
+            let _ = crate::stock::feeder_restored(&target.backups, &target.identity);
+            Ok(Restored::Activated)
+        }
         Pushed::Failed(error) => Ok(Restored::Refused(error)),
         Pushed::Gone { offered: true } => Ok(Restored::Uncertain(Uncertainty::Gone)),
         Pushed::Gone { offered: false } => {

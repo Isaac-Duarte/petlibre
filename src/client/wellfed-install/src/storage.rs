@@ -166,6 +166,9 @@ impl Paired {
 /// later trial never closes on it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Answered {
+    /// The stock server's config, whose ledger the trial is in, so a restore
+    /// that takes no such path can still settle it.
+    pub(crate) config: PathBuf,
     /// Stock's device ID, as the installer's broker enrolled it.
     pub(crate) device: String,
     pub(crate) build: String,

@@ -36,6 +36,7 @@
 
 use core::fmt;
 use core::marker::PhantomData;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use sha2::{Digest, Sha256};
 pub use wellfed_core::ota::SectorStep;
@@ -145,6 +146,17 @@ impl<H: Hooks> Flash for SdkFlash<H> {
     fn clear_handover(&mut self) -> bool {
         handover::clear(&HandoverSector::<H>(PhantomData))
     }
+}
+
+/// The handover wrote a new update record under the stage's feet. Both run on
+/// the service task, one step at a time, and an offer waits for what the
+/// handover holds back from being published, so the stage reads it again
+/// before its next write can carry the old floor forward.
+static STORE_STARTED_OVER: AtomicBool = AtomicBool::new(false);
+
+/// The stage reads the update store again on its next step.
+pub fn store_started_over() {
+    STORE_STARTED_OVER.store(true, Ordering::Release);
 }
 
 /// The one sector the handover mark is in, through the SDK wrappers.
@@ -528,6 +540,7 @@ impl<I: SlotIo + Clone> Update<I> {
     }
 
     fn open(&mut self) -> Record {
+        STORE_STARTED_OVER.store(false, Ordering::Release);
         self.store.open(self.io.clone());
         self.opened = true;
         self.attempt = self.bank == 0 && arming::update_attempted();
@@ -625,7 +638,7 @@ impl<I: SlotIo + Clone> Update<I> {
     /// One step; `now` is uptime in milliseconds.
     pub fn step(&mut self, flash: &mut impl Flash, now: u32) -> Step {
         const { assert!(IDLE_MS <= WRITER_POLL_MS) };
-        if !self.opened {
+        if !self.opened || STORE_STARTED_OVER.load(Ordering::Acquire) {
             return next(BUSY_MS, Some(self.open()));
         }
         // An install holds its write turn across its sectors: it goes no

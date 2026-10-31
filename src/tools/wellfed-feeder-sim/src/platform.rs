@@ -39,6 +39,7 @@ use wellfed_core::log_tail::{Batch as LogBatch, LogTail};
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::store::handover;
 use wellfed_core::store::slot::{SlotIo, crc32};
+use wellfed_core::store::update::UpdateStore;
 use wellfed_core::supply::{self, Reading, Sample};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::Reader;
@@ -739,6 +740,10 @@ fn finish_handover(flash: &Rc<Flash>) {
     if let Some(identity) = clients.identity().copied() {
         let _ = clients.reset(&identity);
     }
+    let mut update = UpdateStore::default();
+    update.open(Region::new(flash, storage::UPDATE));
+    let _ = update.start_over();
+    wellfed_hal::ota::update::store_started_over();
     handover::clear(&marker);
 }
 

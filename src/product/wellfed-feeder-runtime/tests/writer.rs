@@ -1894,8 +1894,9 @@ fn reset_boot(provider: &mut Provider, steps: Option<usize>) -> Vec<Record> {
             record,
             Some(Record::ResetDone { .. } | Record::Open { .. } | Record::HandoverDone { .. })
         ) {
-            // Net, time, keys, events, stats and the stats save.
-            left = Some(6);
+            // Net, time, keys, events, stats and the stats save, or the
+            // handover's seven steps.
+            left = Some(7);
         }
         records.extend(record);
     }
@@ -1986,13 +1987,53 @@ fn a_handover_clears_wifi_and_clients_and_keeps_the_identity() {
     );
 }
 
+/// The floor holds across an ordinary boot, and only the handover forgets it.
+#[test]
+fn a_handover_forgets_the_update_floor_and_an_ordinary_boot_does_not() {
+    use wellfed_core::ota::offer::ImageKind;
+    use wellfed_core::store::update::{Candidate, UpdateStore};
+    use wellfed_hal::plaf103::storage;
+
+    type Slots = wellfed_sdk::storage::Region<Armed, { storage::UPDATE.first }, 2>;
+    let floor = || {
+        let mut update = UpdateStore::default();
+        update.open(Slots::new());
+        update.record().min_version
+    };
+
+    let (_guard, mut provider, _) = paired_with_wifi();
+    let mut update = UpdateStore::default();
+    update.open(Slots::new());
+    let build = [0x55; 32];
+    update
+        .set_activated(Candidate {
+            digest: [1; 32],
+            version: 5,
+            build_id: build,
+            kind: ImageKind::Replacement,
+        })
+        .unwrap();
+    update.confirm(&build).unwrap();
+
+    reset_boot(&mut provider, None);
+    assert_eq!(floor(), 5);
+
+    plant_handover();
+    let records = reset_boot(&mut provider, None);
+    assert!(
+        records.contains(&Record::HandoverDone { cleared: true }),
+        "{records:?}"
+    );
+    assert_eq!(floor(), 0);
+}
+
 /// A cut at each step of the clearing leaves the mark, and the next boot does
 /// the whole of it, keeping the identity.
 #[test]
 fn a_cut_during_a_handover_repeats_it() {
     use wellfed_hal::plaf103::storage;
 
-    for cut in 1..7 {
+    for cut in 1..8 {
         let (guard, mut provider, identity) = paired_with_wifi();
         plant_handover();
 

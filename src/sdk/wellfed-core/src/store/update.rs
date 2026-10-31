@@ -2,7 +2,8 @@
 //! update, and the anti-rollback floor.
 //!
 //! - **The floor** (`min_version`): the highest version a build confirmed
-//!   at. An offer at or below it needs a downgrade statement. It only rises.
+//!   at. An offer at or below it needs a downgrade statement. It only rises,
+//!   until the feeder goes back to stock and starts over ([`UpdateStore::start_over`]).
 //! - **The candidate:** the manifest bank 1 gave way for (`Pending`), so
 //!   bank 0 installs that one and no other, then the one bank 0 activated
 //!   (`Activated`), which the new build matches against its own identity
@@ -47,7 +48,9 @@
 //! newer record only extends. Storage formats stay readable by the bank-0
 //! build ([OTA design](../../../../../docs/firmware/ota-design.md)), so a
 //! change to this layout ships a bank-0 refresh first. The factory reset
-//! leaves the store alone: a reset must not reopen a downgrade.
+//! leaves the store alone: a reset must not reopen a downgrade. Going back to
+//! stock does reopen it, since that was the owner's signed choice and an
+//! install from stock has to take the same version again.
 
 use core::ffi::c_uint;
 
@@ -500,11 +503,36 @@ impl<I: SlotIo> UpdateStore<I> {
         })
     }
 
-    /// Write `next` to the other unit by the torn-write rule. A failure
-    /// keeps the previous record in memory. A record that would lower the
-    /// floor or forget a retired id is never written.
+    /// The feeder went back to stock, so what comes next is a first install:
+    /// the floor and the candidate go. The retired ids stay, as a promise that
+    /// outlives any firmware, and so do the release slot's key and bank 0's
+    /// recorded image, which only say what is true of this feeder. Only the
+    /// handover from stock's activation may call this. Writes nothing when
+    /// there is nothing to forget, so repeating it after a cut costs no erase.
+    pub fn start_over(&mut self) -> Result<(), UpdateError> {
+        if self.record.min_version == 0 && self.record.state == State::None {
+            return Ok(());
+        }
+        self.write(&Update {
+            min_version: 0,
+            state: State::None,
+            ..self.record
+        })
+    }
+
+    /// A record that would lower the floor or forget a retired id is never
+    /// written, but for [`Self::start_over`].
     fn save(&mut self, next: &Update) -> Result<(), UpdateError> {
-        if !self.writable() || !self.units.writable() || !self.record.kept_by(next) {
+        if !self.record.kept_by(next) {
+            return Err(UpdateError::NotWritable);
+        }
+        self.write(next)
+    }
+
+    /// Write `next` to the other unit by the torn-write rule. A failure
+    /// keeps the previous record in memory.
+    fn write(&mut self, next: &Update) -> Result<(), UpdateError> {
+        if !self.writable() || !self.units.writable() {
             return Err(UpdateError::NotWritable);
         }
         let generation = self.generation + 1;

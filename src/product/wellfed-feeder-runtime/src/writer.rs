@@ -69,6 +69,7 @@ use wellfed_core::named_enum;
 
 use wellfed_core::store::handover;
 use wellfed_core::store::seed::{SeedStatus, SeedStore};
+use wellfed_core::store::update::{UpdateStatus, UpdateStore};
 use wellfed_device_api::mailbox::{CallChange, CallClip};
 use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
 use wellfed_feeder::store::calibration::CalibrationStore;
@@ -107,6 +108,7 @@ use wellfed_feeder::feeder::platform::EventsFill;
 
 /// The factory reset's marker sector (`storage::RESET`).
 pub const RESET_BASE: u32 = wellfed_hal::plaf103::storage::RESET.first;
+const UPDATE_BASE: u32 = wellfed_hal::plaf103::storage::UPDATE.first;
 
 pub const POLL_MS: u32 = 200;
 /// Between a factory reset's erases, each its own step and write turn.
@@ -1180,12 +1182,13 @@ impl<F: FlashOps> Writer<F> {
     }
 
     /// One step of the handover: the Wi-Fi's two sectors, the plans' two, the
-    /// clients, then the mark, each under its own write turn and attempt
-    /// marker. A cut anywhere repeats it, since the mark goes last. A build
-    /// with Wi-Fi of its own is a bench image, which pairs through the
-    /// recovery window rather than Bluetooth, so it keeps its stores and only
-    /// erases the mark. A step that fails leaves the mark for the next boot,
-    /// and this one serves what it has.
+    /// clients, the update store's floor and candidate, then the mark, each
+    /// under its own write turn and attempt marker. A cut anywhere repeats it,
+    /// since the mark goes last. A build with Wi-Fi of its own is a bench image,
+    /// which pairs through the recovery window rather than Bluetooth, so it
+    /// keeps its Wi-Fi, plans and clients, but any image installed from stock
+    /// has to take the same version again. A step that fails leaves the mark
+    /// for the next boot, and this one serves what it has.
     fn handover_step<H: Hooks>(&mut self) -> Step {
         let Some(step) = self.handing_over else {
             return next(POLL_MS, None);
@@ -1216,6 +1219,19 @@ impl<F: FlashOps> Writer<F> {
                     None => true,
                 }
             }
+            5 => {
+                let mut update = UpdateStore::default();
+                update.open(Region::<F, UPDATE_BASE, 2>::new());
+                let started = match update.status {
+                    // A newer schema's floor is not this build's to touch.
+                    UpdateStatus::ReadOnly => true,
+                    _ => update.start_over().is_ok(),
+                };
+                if started {
+                    wellfed_hal::ota::update::store_started_over();
+                }
+                started
+            }
             _ => F::erase(RESET_BASE) && blank::<F>(RESET_BASE),
         };
         arming::clear_attempt();
@@ -1224,7 +1240,7 @@ impl<F: FlashOps> Writer<F> {
         if !done {
             return self.handover_end(Record::HandoverStopped { stage: step });
         }
-        if step < 5 {
+        if step < 6 {
             self.handing_over = Some(step + 1);
             return next(RESET_POLL_MS, None);
         }

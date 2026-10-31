@@ -226,3 +226,30 @@ fn a_corrupted_record_falls_back_to_the_older_one() {
     f.bytes[1][40] ^= 1;
     assert_eq!(open(&mut f).record().state, State::Pending(candidate(2, 1)));
 }
+
+/// Going back to stock forgets the floor and the candidate, and nothing that
+/// was a promise about keys.
+#[test]
+fn starting_over_forgets_the_floor_and_the_candidate_only() {
+    let mut f = FakeJournalFlash::with_unit(UNIT);
+    let mut s = open(&mut f);
+    s.set_activated(candidate(7, 1)).unwrap();
+    s.confirm(&[1; 32]).unwrap();
+    s.add_key(&[3; 32]).unwrap();
+    s.revoke(&[4; 8]).unwrap();
+    s.set_pending(candidate(9, 2)).unwrap();
+
+    let mut s = open(&mut f);
+    s.start_over().unwrap();
+    let r = open(&mut f);
+    assert_eq!(r.record().min_version, 0);
+    assert_eq!(r.record().state, State::None);
+    assert_eq!(r.record().added, Some([3; 32]));
+    assert_eq!(r.record().revoked(), [[4; 8]]);
+
+    // Repeated after a cut, it writes nothing.
+    let generation = r.generation;
+    let mut s = open(&mut f);
+    s.start_over().unwrap();
+    assert_eq!(open(&mut f).generation, generation);
+}

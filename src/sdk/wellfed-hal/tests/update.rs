@@ -919,6 +919,41 @@ fn bank_0_installs_only_the_pending_manifest_and_never_a_failed_one() {
     assert_eq!(rig.offer(&first, None), Err(Refused::Failed));
 }
 
+/// With no handover the floor holds: the same version and a lower one are
+/// refused. Starting over after stock's activation lets the same version in
+/// again, read by a stage that had already opened the store.
+#[test]
+fn starting_over_lets_the_same_version_install_again() {
+    let _guard = start(0);
+    let mut s = store();
+    let old = Candidate {
+        digest: [1; 32],
+        version: 5,
+        build_id: [0x55; 32],
+        kind: ImageKind::Replacement,
+    };
+    s.set_activated(old).unwrap();
+    s.confirm(&[0x55; 32]).unwrap();
+
+    let mut rig = Rig::bench(0);
+    let payload = image(LEN);
+    for version in [5, 4] {
+        assert_eq!(
+            rig.offer(&manifest(version, &payload), None),
+            Err(Refused::Offer(OfferError::Downgrade)),
+            "version {version}"
+        );
+    }
+
+    let mut s = store();
+    s.start_over().unwrap();
+    wellfed_hal::ota::update::store_started_over();
+
+    assert!(rig.offer(&manifest(5, &payload), None).is_ok());
+    assert_eq!(rig.ask(Request::Cancel).map(|_| ()), Ok(()));
+    assert_eq!(store().record().min_version, 0);
+}
+
 #[test]
 fn a_replayed_version_needs_a_downgrade_statement_for_this_feeder_and_floor() {
     let _guard = start(0);

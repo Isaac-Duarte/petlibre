@@ -2144,6 +2144,55 @@ fn a_handover_that_cannot_finish_waits_for_the_next_boot() {
     );
 }
 
+/// An update store that cannot be read may still hold its floor, so the mark
+/// stays for the next boot, which resets it.
+#[test]
+fn a_handover_waits_for_an_update_store_it_can_read() {
+    use wellfed_core::ota::offer::ImageKind;
+    use wellfed_core::store::update::{Candidate, UpdateStore};
+    use wellfed_hal::plaf103::storage;
+
+    type Slots = wellfed_sdk::storage::Region<Armed, { storage::UPDATE.first }, 2>;
+
+    let (_guard, mut provider, _) = paired_with_wifi();
+    let mut update = UpdateStore::default();
+    update.open(Slots::new());
+    let build = [0x55; 32];
+    update
+        .set_activated(Candidate {
+            digest: [1; 32],
+            version: 5,
+            build_id: build,
+            kind: ImageKind::Replacement,
+        })
+        .unwrap();
+    update.confirm(&build).unwrap();
+    plant_handover();
+    fake::with(|h| h.fail_storage_read = Some(storage::UPDATE.first));
+
+    let stopped = reset_boot(&mut provider, None);
+
+    assert!(
+        stopped
+            .iter()
+            .any(|record| matches!(record, Record::HandoverStopped { stage: 5 })),
+        "{stopped:?}"
+    );
+    let at = storage_reset_first();
+    assert_eq!(
+        fake::with(|h| h.storage[at..at + 16].to_vec()),
+        handover::MARKER
+    );
+
+    fake::with(|h| h.fail_storage_read = None);
+    let finished = reset_boot(&mut provider, None);
+
+    assert!(finished.contains(&Record::HandoverDone { cleared: true }));
+    let mut update = UpdateStore::default();
+    update.open(Slots::new());
+    assert_eq!(update.record().min_version, 0);
+}
+
 /// After a finished reset: every cleared store opens empty and writable,
 /// the clients are gone under a new identity, the history starts again
 /// under a new epoch, the totals start from this boot, and what it keeps is

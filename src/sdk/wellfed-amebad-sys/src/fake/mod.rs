@@ -152,6 +152,8 @@ pub struct Hardware {
     pub gpio_irqs: u32,
     pub fail_timer_register: bool,
     pub fail_gpio_register: bool,
+    /// A storage sector whose reads fail.
+    pub fail_storage_read: Option<u32>,
 
     pub task_create_fail: bool,
     pub task_live: bool,
@@ -320,6 +322,7 @@ impl Default for Hardware {
 
             fail_timer_register: false,
             fail_gpio_register: false,
+            fail_storage_read: None,
             task_create_fail: false,
             task_live: false,
             blocked_optics_off: false,

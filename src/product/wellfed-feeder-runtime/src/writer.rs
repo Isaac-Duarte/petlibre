@@ -1232,6 +1232,9 @@ impl<F: FlashOps> Writer<F> {
                 let started = match update.status {
                     // A newer schema's floor is not this build's to touch.
                     UpdateStatus::ReadOnly => true,
+                    // Its floor is unknown and may still stand, so the mark
+                    // stays and the next boot tries again.
+                    UpdateStatus::Io => false,
                     _ => update.start_over().is_ok(),
                 };
                 if started {

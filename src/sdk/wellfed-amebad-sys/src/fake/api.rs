@@ -152,6 +152,9 @@ pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     let Some(at) = storage_span(sector, offset, bytes.len()) else {
         return false;
     };
+    if with(|h| h.fail_storage_read == Some(sector)) {
+        return false;
+    }
     with(|h| bytes.copy_from_slice(&h.storage[at..at + bytes.len()]));
     true
 }

@@ -504,8 +504,8 @@ impl<I: SlotIo> UpdateStore<I> {
     }
 
     /// The feeder went back to stock, so what comes next is a first install:
-    /// the floor goes, and so does a pending candidate, which nothing could
-    /// cancel before a promotion needs the slot. An activated one stays, so
+    /// the floor goes, and so does a pending candidate, which the install run
+    /// never cancels before its promotion needs the slot. An activated one stays, so
     /// the same manifest is still refused as failed rather than offered again;
     /// the next install overwrites it. The retired ids stay, as a promise that
     /// outlives any firmware, and so do the release slot's key and bank 0's

@@ -406,7 +406,8 @@ impl Feeds for AtRest {
 }
 
 /// With no feed in the boot, a reading at rest lights low food and one of
-/// food clears it, each change one `Food` event however often it reads.
+/// food clears it. The boot's first level is no event, and each later change
+/// is one, however often the beam reads.
 #[test]
 fn a_reading_at_rest_lights_low_food_and_a_refill_clears_it() {
     let rig = Rig::new();
@@ -442,7 +443,7 @@ fn a_reading_at_rest_lights_low_food_and_a_refill_clears_it() {
     owner.food = Some(false);
     run(&mut feeder, 1_000, &mut owner);
     assert!(on(Light::Food), "low with no feed");
-    assert_eq!(food_events(), [FoodLevel::Low]);
+    assert_eq!(food_events(), [], "a boot's first reading records nothing");
 
     run(&mut feeder, 2_000, &mut owner);
     assert_eq!(food_events(), [], "no repeat");
@@ -451,6 +452,11 @@ fn a_reading_at_rest_lights_low_food_and_a_refill_clears_it() {
     run(&mut feeder, 3_000, &mut owner);
     assert!(!on(Light::Food), "a refill clears it");
     assert_eq!(food_events(), [FoodLevel::Present]);
+
+    owner.food = Some(false);
+    run(&mut feeder, 4_000, &mut owner);
+    assert!(on(Light::Food));
+    assert_eq!(food_events(), [FoodLevel::Low], "a later change records");
     drop(rig);
 }
 

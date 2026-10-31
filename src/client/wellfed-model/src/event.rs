@@ -160,7 +160,7 @@ pub enum EventBody {
         reason: Blocked,
     },
     /// The food beam's level changed (at most once a feed or a reading at
-    /// rest). The first reading after a boot counts as one.
+    /// rest). A boot's first reading counts as one only if a feed took it.
     Food {
         level: FoodLevel,
     },

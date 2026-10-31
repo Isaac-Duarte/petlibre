@@ -1696,7 +1696,7 @@ fn a_refill_clears_low_food_at_the_next_idle_reading() {
 #[test]
 fn a_write_ends_a_reading() {
     let write = FOOD_LIT + 400;
-    let retry = write + 30_000;
+    let retry = write + 35_000;
     let report = passing(
         vec![
             act(50, "inputs", &[7]),
@@ -1862,7 +1862,7 @@ fn a_held_feeder_reads_nothing_until_it_lets_go() {
 #[test]
 fn a_stalled_loop_loses_only_the_reading() {
     let stall = FOOD_LIT + 300;
-    let retry = stall + 600 + 30_000;
+    let retry = stall + 600 + 35_000;
     let report = passing(
         vec![
             act(50, "inputs", &[7]),

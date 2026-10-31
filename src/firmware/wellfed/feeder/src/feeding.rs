@@ -249,13 +249,20 @@ pub fn writes_queued() -> bool {
 /// emitters read back off, so lit emitters would restart both; and its
 /// deadline resets the boot however close that came. So a trial reads nothing
 /// until it has confirmed, and its low-food light stays dark until then.
+///
+/// Bluetooth `setup` holds them too. Setup's prebuilt Bluetooth and Wi-Fi
+/// libraries have never run with lit emitters, and one that wrote flash would
+/// fail the lease's stopped check and reset the board. The first reading comes
+/// `FOOD_READ_FIRST_MS` after setup ends. Setup's start ends a reading already
+/// running, by way of the platform's `ble_restart`.
 pub const fn food_read_held(
     confirming: bool,
+    setup: bool,
     in_flight: InFlight,
     interrupted: bool,
     queued: bool,
 ) -> bool {
-    confirming || matches!(in_flight, InFlight::Feed) || interrupted || queued
+    confirming || setup || matches!(in_flight, InFlight::Feed) || interrupted || queued
 }
 
 /// The owner's figures for a feed's drive, as its trace's summary keeps
@@ -829,11 +836,21 @@ mod target {
     }
 
     impl Feeding {
-        /// One pass; the owner's delay while it runs. A feed's end goes to
-        /// the log (`record`), and its `Fed` event and its trace's summary
-        /// to `outcome`.
+        /// End a food reading now: Bluetooth setup is starting in this pass,
+        /// ahead of the next step's hold. For the platform, which holds no
+        /// `Feeding`; the owner is reached through its static, as in a pass.
+        pub fn yield_food_read() {
+            if let Some(owner) = OWNER.enter() {
+                owner.yield_food_read(&INTERLOCK);
+            }
+        }
+
+        /// One pass; the owner's delay while it runs. `setup` is whether
+        /// Bluetooth setup runs. A feed's end goes to the log (`record`), and
+        /// its `Fed` event and its trace's summary to `outcome`.
         pub fn step(
             &mut self,
+            setup: bool,
             mut record: impl FnMut(Record),
             mut outcome: impl FnMut(EventBody, Option<&TraceSummary>),
         ) -> Option<u32> {
@@ -887,6 +904,7 @@ mod target {
             };
             let held = super::food_read_held(
                 wellfed_sdk::confirming(),
+                setup,
                 in_flight,
                 self.interrupted.is_some(),
                 super::writes_queued(),

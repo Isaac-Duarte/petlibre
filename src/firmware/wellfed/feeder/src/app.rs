@@ -142,7 +142,9 @@ fn loop_task() -> u32 {
     #[cfg(feature = "buzzer")]
     let buzzer_delay = buzzer::step(&feeding);
     let began = sdk::systimer_ticks();
+    let setup = feeder.setup_on();
     let mut feed_delay = feeding.step(
+        setup,
         |record| log(format_args!("PLOWN1 {record}\r\n")),
         |body, trace| outcome(&mut feeder, body, trace),
     );
@@ -159,7 +161,9 @@ fn loop_task() -> u32 {
     // gap between its steps is the pass, not the pass and the delay.
     if feeding.feeding() && feeder.handshook() {
         feeding.handshook();
+        let setup = feeder.setup_on();
         feed_delay = feeding.step(
+            setup,
             |record| log(format_args!("PLOWN1 {record}\r\n")),
             |body, trace| outcome(&mut feeder, body, trace),
         );

@@ -6617,7 +6617,7 @@
           },
           {
             "type": "object",
-            "description": "The food beam's level changed (at most once a feed or a reading at\nrest). The first reading after a boot counts as one.",
+            "description": "The food beam's level changed (at most once a feed or a reading at\nrest). A boot's first reading counts as one only if a feed took it.",
             "required": [
               "level",
               "kind"

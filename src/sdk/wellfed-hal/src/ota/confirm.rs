@@ -51,6 +51,8 @@ pub const POLL_MS: u32 = 500;
 const _: () = assert!(POLL_MS <= WRITER_POLL_MS);
 /// Continuous health before confirming.
 pub const HEALTHY_MS: u32 = 30_000;
+// Lit emitters restart this wait, so retried food readings must leave it room.
+const _: () = assert!(wellfed_core::feed::food_read::FOOD_READ_RETRY_MS > HEALTHY_MS);
 
 /// The storage region by sector, as `sdk::storage_*` take it.
 pub trait StorageFlash {

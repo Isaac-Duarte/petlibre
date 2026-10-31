@@ -588,6 +588,10 @@ impl Platform for Plaf103 {
     }
 
     fn ble_restart(&mut self) {
+        // Setup's first step follows in this pass, ahead of the owner's next
+        // step, which is what would otherwise see setup and end a reading.
+        #[cfg(target_os = "none")]
+        crate::feeding::Feeding::yield_food_read();
         self.ble = BleSetup::new();
     }
 

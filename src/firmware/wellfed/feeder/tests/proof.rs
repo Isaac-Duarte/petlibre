@@ -2,9 +2,12 @@
 //! its journal and at rest, every check passing, for `PROOF_MS`; and what
 //! makes the trial fail at once instead.
 
-use wellfed_core::feed::food_read::{FOOD_READ_FIRST_MS, FoodReads, FoodStep, FoodView};
+use wellfed_core::feed::food_read::{
+    FOOD_READ_FIRST_MS, FOOD_READ_MS, FoodReads, FoodStep, FoodView,
+};
 use wellfed_fw_feeder::feeding::{InFlight, Opened, PROOF_MS, Proof, food_read_held};
 use wellfed_sdk::Feeding;
+use wellfed_sdk::hal::ota::confirm::HEALTHY_MS;
 use wellfed_sdk::hal::owner::{OwnerFault, OwnerState, OwnerStatus};
 use wellfed_sdk::hal::supervision::events::EventsFault;
 
@@ -64,7 +67,7 @@ fn a_trial_holds_food_readings_so_it_still_proves_itself() {
     // the owner's proof runs its window out.
     let mut reads = FoodReads::new();
     let mut proof = Proof::default();
-    let held = food_read_held(true, InFlight::Nothing, false, false);
+    let held = food_read_held(true, false, InFlight::Nothing, false, false);
     let view = FoodView::default();
     let mut proven = false;
     for now in (0..2 * PROOF_MS + FOOD_READ_FIRST_MS).step_by(20) {
@@ -75,7 +78,7 @@ fn a_trial_holds_food_readings_so_it_still_proves_itself() {
 
     // Confirmed: the first reading comes after its usual wait.
     let confirmed = 2 * PROOF_MS + FOOD_READ_FIRST_MS;
-    let held = food_read_held(false, InFlight::Nothing, false, false);
+    let held = food_read_held(false, false, InFlight::Nothing, false, false);
     assert_eq!(reads.step(confirmed, view, held), FoodStep::Rest);
     assert_eq!(
         reads.step(confirmed + FOOD_READ_FIRST_MS, view, held),
@@ -83,14 +86,80 @@ fn a_trial_holds_food_readings_so_it_still_proves_itself() {
     );
 }
 
+/// Readings that never settle, one after another, leave the outputs dark for
+/// longer than the confirmation's verified-stopped wait, so they cannot
+/// starve it.
+#[test]
+fn retried_food_readings_leave_the_confirmation_its_window() {
+    let mut reads = FoodReads::new();
+    let view = FoodView::default();
+    let held = food_read_held(false, false, InFlight::Nothing, false, false);
+    assert_eq!(reads.step(0, view, held), FoodStep::Rest);
+
+    let mut lit = FOOD_READ_FIRST_MS;
+    for _ in 0..3 {
+        assert_eq!(reads.step(lit, view, held), FoodStep::Start);
+        reads.started();
+
+        // The window ends unjudged; time how long until the next asks.
+        let dark = lit + FOOD_READ_MS;
+        assert_eq!(reads.step(dark, view, held), FoodStep::Rest);
+        let mut next = dark;
+        while reads.step(next, view, held) != FoodStep::Start {
+            next += 20;
+        }
+        assert!(next - dark > HEALTHY_MS, "dark for {} ms", next - dark);
+        lit = next;
+    }
+}
+
+/// Bluetooth setup holds readings, however long it runs, and the first comes
+/// its usual wait after setup ends.
+#[test]
+fn setup_holds_food_readings_until_it_ends() {
+    let setup = food_read_held(false, true, InFlight::Nothing, false, false);
+    assert!(setup);
+
+    let mut reads = FoodReads::new();
+    let view = FoodView::default();
+    for now in (0..4 * FOOD_READ_FIRST_MS).step_by(20) {
+        assert_eq!(reads.step(now, view, setup), FoodStep::Rest);
+    }
+
+    let ended = 4 * FOOD_READ_FIRST_MS;
+    let free = food_read_held(false, false, InFlight::Nothing, false, false);
+    assert_eq!(reads.step(ended, view, free), FoodStep::Rest);
+    assert_eq!(
+        reads.step(ended + FOOD_READ_FIRST_MS - 1, view, free),
+        FoodStep::Rest
+    );
+    assert_eq!(
+        reads.step(ended + FOOD_READ_FIRST_MS, view, free),
+        FoodStep::Start
+    );
+
+    // Setup that starts during a reading ends it.
+    let lit = FoodView {
+        reading: true,
+        reads: 0,
+    };
+    assert_eq!(reads.step(ended + 6_000, lit, setup), FoodStep::Yield);
+}
+
 /// A feed in flight, one being resolved and work queued for a writer each
 /// hold readings too.
 #[test]
 fn a_feed_or_queued_work_holds_food_readings() {
-    assert!(food_read_held(false, InFlight::Feed, false, false));
-    assert!(food_read_held(false, InFlight::Nothing, true, false));
-    assert!(food_read_held(false, InFlight::Nothing, false, true));
-    assert!(!food_read_held(false, InFlight::Nothing, false, false));
+    assert!(food_read_held(false, false, InFlight::Feed, false, false));
+    assert!(food_read_held(false, false, InFlight::Nothing, true, false));
+    assert!(food_read_held(false, false, InFlight::Nothing, false, true));
+    assert!(!food_read_held(
+        false,
+        false,
+        InFlight::Nothing,
+        false,
+        false
+    ));
 }
 
 #[test]

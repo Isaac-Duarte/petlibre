@@ -189,7 +189,9 @@ class _Facts extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final last = card.lastFed?.atMs;
+    // A time only when the last feed took this reading: one at rest has none.
+    final fed = card.lastFed;
+    final last = fed?.hopper == card.food ? fed?.atMs : null;
     final at = last == null ? '' : ' at ${clockTextMs(context, last)}';
     final (food, foodColor) = switch (card.food) {
       FoodLevel.present => ('In the hopper$at', c.food),

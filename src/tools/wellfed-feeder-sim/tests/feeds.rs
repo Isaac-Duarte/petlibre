@@ -318,8 +318,8 @@ async fn food(connection: &mut Connection, id: u8) -> FoodLevel {
     }
 }
 
-/// With no feed at all, the boot's food reading shows an empty hopper as one
-/// `Food` event, and the next, ten minutes on, shows a refill.
+/// With no feed at all, the boot's food reading shows an empty hopper in the
+/// status, and the next, ten minutes on, shows a refill.
 #[test]
 fn the_food_beam_reads_at_rest_after_a_boot_and_a_refill() {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -336,7 +336,6 @@ fn the_food_beam_reads_at_rest_after_a_boot_and_a_refill() {
         assert_eq!(food(&mut owner, 1).await, FoodLevel::Unread, "just booted");
 
         sleep(Duration::from_millis(u64::from(FOOD_READ_FIRST_MS) + 100)).await;
-        assert_eq!(next_food(&mut owner).await, FoodLevel::Low);
         assert_eq!(food(&mut owner, 2).await, FoodLevel::Low);
 
         // A session lasts 90 s without a request; the reading does not care.

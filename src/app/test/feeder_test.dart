@@ -112,6 +112,22 @@ void main() {
     expect(find.textContaining('Hopper'), findsNothing);
   });
 
+  testWidgets('a low reading at rest borrows no time from the last feed', (
+    tester,
+  ) async {
+    final (fleet, session) = await _fleet(tester);
+    await _showShell(tester, fleet);
+
+    // The last feed read food; the level has gone low since, with no event.
+    final fedAt = DateTime(2026, 10, 30, 7, 30).millisecondsSinceEpoch;
+    session.status(fakeCard(food: FoodLevel.low, lastFed: fakeFed(atMs: fedAt)));
+    await settle(tester);
+
+    expect(find.text('Low'), findsOneWidget);
+    expect(find.text('Low at 7:30 AM'), findsNothing);
+    expect(find.textContaining('read low at'), findsNothing);
+  });
+
   testWidgets('an uncertain last feed is a range, never one number', (
     tester,
   ) async {

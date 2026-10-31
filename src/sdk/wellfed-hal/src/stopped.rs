@@ -16,8 +16,10 @@ pub const PA_MASK: u32 = MOTOR_MASK | IR_PA_BIT;
 pub const PB_MASK: u32 = IR_PB_BIT;
 
 /// Emitters held on at rest under an armed supervisor budget: bit 0 PA15,
-/// bit 1 PB3. Written by the optics probe and by the owner's food readings,
-/// which never share a firmware; read by health.
+/// bit 1 PB3; read by health. Written by the optics probe and by the feeding
+/// owner, whose `quiet` clears it. They never share a firmware: only `feeder`
+/// opens an owner, and it does not link `wellfed-probes`, which only `qa` and
+/// `bringup` do.
 static SUPERVISED: AtomicU32 = AtomicU32::new(0);
 
 /// Both emitters, as [`set_supervised`] takes them.

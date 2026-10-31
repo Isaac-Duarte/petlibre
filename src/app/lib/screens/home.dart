@@ -416,9 +416,12 @@ class FeederCard extends StatelessWidget {
     ];
   }
 
-  /// The hopper's last reading, when the history has its feed.
+  /// The hopper's last reading, with its time only when the last feed took
+  /// it. A reading at rest carries no time, and the last feed may have read
+  /// food long before it.
   static String _lowLead(BuildContext context, api.Card? card) {
-    final at = card?.lastFed?.atMs;
+    final last = card?.lastFed;
+    final at = last?.hopper == FoodLevel.low ? last?.atMs : null;
     return at == null
         ? 'Food is low.'
         : 'Food read low at ${clockTextMs(context, at)}.';

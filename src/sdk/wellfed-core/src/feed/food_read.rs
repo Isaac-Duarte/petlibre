@@ -41,7 +41,11 @@ pub const FOOD_READ_FIRST_MS: u32 = 5_000;
 pub const FOOD_READ_EVERY_MS: u32 = 10 * 60_000;
 
 /// Until the next try after a reading that gave way or settled on nothing.
-pub const FOOD_READ_RETRY_MS: u32 = 30_000;
+/// Longer than the confirmation's 30 s of outputs verified stopped
+/// (`wellfed_hal::ota::confirm::HEALTHY_MS`, which asserts this), or windows
+/// that never settle would restart that wait for ever. The worst duty, every
+/// window retried, is 1.2 s in 36.2 s: about 3.3 %.
+pub const FOOD_READ_RETRY_MS: u32 = 35_000;
 
 /// What a step of the schedule says to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,8 +195,14 @@ mod tests {
 
         // Its end is seen though the hold lasts, and the retry is timed from it.
         assert_eq!(reads.step(40, IDLE, true), FoodStep::Rest);
-        assert_eq!(reads.step(30_039, IDLE, false), FoodStep::Rest);
-        assert_eq!(reads.step(30_040, IDLE, false), FoodStep::Start);
+        assert_eq!(
+            reads.step(40 + FOOD_READ_RETRY_MS - 1, IDLE, false),
+            FoodStep::Rest
+        );
+        assert_eq!(
+            reads.step(40 + FOOD_READ_RETRY_MS, IDLE, false),
+            FoodStep::Start
+        );
     }
 
     /// A hold longer than half the clock's range still reads as due at its end.

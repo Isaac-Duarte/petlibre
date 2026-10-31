@@ -28,9 +28,11 @@
 //! **Food level.** The food beam is lit during feeds and in a short window at
 //! rest (`wellfed_core::feed::food_read`), so its level is the latest of
 //! either's. With no feed in flight, a level that differs from the last one
-//! recorded this boot (the first included) is a `Food` event ([`Watch::food`]):
-//! at most one a feed or a window, however the beam flickers as the last
-//! kibble passes. No feed waits on it or is refused for it, as stock.
+//! seen this boot is a `Food` event ([`Watch::food`]): at most one a feed or a
+//! window, however the beam flickers as the last kibble passes. A boot's first
+//! reading records only if a feed took it: a first window says nothing has
+//! happened to the hopper, so each restart costs neither a History line nor a
+//! flash write. No feed waits on it or is refused for it, as stock.
 //!
 //! **Silent.** A feed plays no tune; that is the owner's choice. A tune a
 //! client asks for with `play` is stepped after the owner and the device
@@ -148,8 +150,10 @@ pub struct Watch {
     /// The reason the last refused Dispense press was recorded for, since
     /// the feeder was last ready.
     refused: Option<Blocked>,
-    /// The food level last recorded this boot (`true` with food).
+    /// The food level last seen at rest this boot (`true` with food).
     food: Option<bool>,
+    /// A feed has been in flight since the last pass at rest.
+    fed: bool,
 }
 
 impl Watch {
@@ -159,16 +163,24 @@ impl Watch {
             lasting: None,
             refused: None,
             food: None,
+            fed: false,
         }
     }
 
     /// The food beam's latest reading, `reading`, with no feed in flight
     /// (`at_rest`): the level to record as a `Food` event when it differs
-    /// from the last one recorded this boot. During a feed the level waits
-    /// for its end, so a beam that flickers records once.
+    /// from the last one seen this boot. During a feed the level waits for
+    /// its end, so a beam that flickers records once. The first level of a
+    /// boot only sets the baseline, unless the feed just ended took it.
     pub fn food(&mut self, reading: Option<bool>, at_rest: bool) -> Option<FoodLevel> {
-        let present = reading.filter(|_| at_rest)?;
-        (self.food.replace(present) != Some(present)).then(|| feed::food_level(Some(present)))
+        if !at_rest {
+            self.fed = true;
+            return None;
+        }
+        let fed = core::mem::take(&mut self.fed);
+        let present = reading?;
+        let last = self.food.replace(present);
+        (last != Some(present) && (last.is_some() || fed)).then(|| feed::food_level(Some(present)))
     }
 
     /// A Dispense press that could not feed, for `reason`: recorded in the
@@ -271,5 +283,37 @@ mod tests {
         assert_eq!(watch.food(Some(false), false), None);
         assert_eq!(watch.food(Some(false), true), Some(FoodLevel::Low));
         assert_eq!(watch.food(Some(false), true), None);
+    }
+
+    /// A boot's first reading at rest sets the baseline with no event, low or
+    /// not; a change after it records, by a window or a feed alike.
+    #[test]
+    fn a_boot_s_first_idle_reading_records_nothing() {
+        for (first, change) in [(false, FoodLevel::Present), (true, FoodLevel::Low)] {
+            let mut watch = Watch::new();
+            assert_eq!(watch.food(None, true), None);
+            assert_eq!(watch.food(Some(first), true), None, "the baseline");
+            assert_eq!(watch.food(Some(first), true), None);
+            assert_eq!(watch.food(Some(!first), true), Some(change), "a window");
+
+            let mut watch = Watch::new();
+            assert_eq!(watch.food(Some(first), true), None);
+            assert_eq!(watch.food(Some(!first), false), None, "during a feed");
+            assert_eq!(watch.food(Some(!first), true), Some(change), "its end");
+        }
+    }
+
+    /// A feed that ended unread leaves the next window a first idle reading,
+    /// and a feed's reading records even as the boot's first.
+    #[test]
+    fn only_a_feed_s_own_reading_records_as_the_first() {
+        let mut watch = Watch::new();
+        assert_eq!(watch.food(None, false), None, "a feed, unread");
+        assert_eq!(watch.food(None, true), None, "it ended");
+        assert_eq!(watch.food(Some(false), true), None, "a window");
+
+        let mut watch = Watch::new();
+        assert_eq!(watch.food(Some(false), false), None, "a feed reads low");
+        assert_eq!(watch.food(Some(false), true), Some(FoodLevel::Low));
     }
 }

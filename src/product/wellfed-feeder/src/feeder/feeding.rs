@@ -30,9 +30,10 @@
 //! either's. With no feed in flight, a level that differs from the last one
 //! seen this boot is a `Food` event ([`Watch::food`]): at most one a feed or a
 //! window, however the beam flickers as the last kibble passes. A boot's first
-//! reading records only if a feed took it: a first window says nothing has
-//! happened to the hopper, so each restart costs neither a History line nor a
-//! flash write. No feed waits on it or is refused for it, as stock.
+//! reading records only if a feed took it: a first window can't tell whether
+//! anything happened to the hopper, so a change made while the feeder was off
+//! shows in the status and the light, not in History, and each restart costs
+//! neither a History line nor a flash write. No feed waits on it or is refused for it, as stock.
 //!
 //! **Silent.** A feed plays no tune; that is the owner's choice. A tune a
 //! client asks for with `play` is stepped after the owner and the device

@@ -25,7 +25,7 @@ Receiver levels show beam state only. They do not show beam geometry, or how muc
 
 A feed reads the food beam as it runs. So that the low-food light and `Status.food` also follow a restart or a refill, the feeder reads it with no feed running: once 5 s after it is first free to, then every 10 minutes (`FOOD_READ_EVERY_MS`). A window that does not reach a level is tried again 35 s later (`FOOD_READ_RETRY_MS`). That gap is longer than the 30 s of verified-stopped outputs the [confirmation](ota-design.md#what-confirmation-proves) waits for, so retries can never starve it.
 
-A window lights both emitters for 1.2 s (`FOOD_READ_MS`): the filter's 100 ms of settling, 1 s of bad readings, and a few samples of lag. The owner judges the level at the window's end, so a flicker inside it changes nothing. A window that ends between levels settles nothing. The level then goes to `Status.food` and the light. A later change is one `Food` event, like any other. A boot's first window records no event and writes nothing, since a restart says nothing about the hopper.
+A window lights both emitters for 1.2 s (`FOOD_READ_MS`): the filter's 100 ms of settling, 1 s of bad readings, and a few samples of lag. The owner judges the level at the window's end, so a flicker inside it changes nothing. A window that ends between levels settles nothing. The level then goes to `Status.food` and the light. A later change is one `Food` event, like any other. A boot's first window records no event and writes nothing, since it can't tell whether anything happened to the hopper. A refill made while the feeder was off shows in the status and the light, not in History.
 
 A window never moves the motor, and these rules keep it out of everything else's way:
 
@@ -36,7 +36,7 @@ A window never moves the motor, and these rules keep it out of everything else's
 | An install | No window starts or runs while a request or an install holds the flash. |
 | A Wi-Fi join | The join waits for the window's end, at most 2.4 s. Joins retry often while there is no network, so a window that gave way to them might never finish. |
 | A client | Nothing changes. The window claims no outputs, so a settings change is not refused `Busy`, and handshakes go on. |
-| Bluetooth setup | No window runs while setup mode does, and setup's start ends one before Bluetooth starts. Lit emitters would fail the stopped check if a prebuilt Bluetooth or Wi-Fi library wrote flash. On a feeder that leaves setup without a restart, the first window comes 5 s after. |
+| Bluetooth setup | No window runs while setup mode does, and setup's start ends one before Bluetooth starts. Lit emitters would fail the stopped check if a prebuilt Bluetooth or Wi-Fi library wrote flash. Setup always ends in a restart, and the first window comes 5 s into that boot. A feeder with no Wi-Fi and no enabled plan runs setup on every boot, so it reads only during feeds. |
 | A trial boot | No window runs until the build has confirmed: its [confirmation](ota-design.md#what-confirmation-proves) requires the emitters read back off. The light stays dark until then. |
 | Batteries | No window runs, since the emitters' current has not been measured. The level stays as the last reading left it. A window ends if the adapter leaves. |
 

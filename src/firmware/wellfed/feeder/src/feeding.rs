@@ -253,7 +253,7 @@ pub fn writes_queued() -> bool {
 /// Bluetooth `setup` holds them too. Setup's prebuilt Bluetooth and Wi-Fi
 /// libraries have never run with lit emitters, and one that wrote flash would
 /// fail the lease's stopped check and reset the board. The first reading comes
-/// `FOOD_READ_FIRST_MS` after setup ends. Setup's start ends a reading already
+/// `FOOD_READ_FIRST_MS` into the boot after setup's restart. Setup's start ends a reading already
 /// running, by way of the platform's `ble_restart`.
 pub const fn food_read_held(
     confirming: bool,

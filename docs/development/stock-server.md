@@ -166,6 +166,8 @@ A proven session closes a trial too, with neither condition about stock. When a 
 
 Nothing a replacement reports ties it to stock's device ID, so that session cannot prove it is the feeder that took the request. A second feeder in setup on the same build could answer instead. So stock reporting after such a close reopens the trial as uncertain, for the version evidence above to resolve, unless a restore from this installer's records activated stock on that feeder first and marked the trial: the app's, `wellfed restore-stock`'s or the bench job's. The evidence's version report holds while stock stays in the session that sent it with its telemetry unbroken, since a stock still in that session cannot have installed, and it reports its version only around a connect; a dropped session or a telemetry gap voids it until a new one. A restore this ledger did not hear of, from another phone, waits for that evidence too.
 
+A known limit: the mark trusts that the feeder restored is the feeder the answer came from. If a second feeder in setup answered and was then restored from this installer's records, the trial closes on it, and stock reporting on the first feeder does not reopen it.
+
 The answer through the API is still the client's word. The server checks it against what it served, not against the device API itself. `wellfed-itest`'s bank-0 step asks for 120 s, past stock's telemetry window.
 
 Operation with a nonempty plan, and stock's time-recovery behavior, are unvalidated; see [stock behavior](../devices/plaf103/stock/README.md).

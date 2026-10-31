@@ -1190,11 +1190,12 @@ impl<F: FlashOps> Writer<F> {
     /// it keeps its Wi-Fi, plans and clients, but any image installed from stock
     /// has to take the same version again, and earn its floor with a real trial.
     ///
-    /// Only bank 0 forgets the confirmation. KM0 never reads it for bank 0, so
-    /// a cut there changes nothing about the boot. On bank 1 this build's next
-    /// boot would run a trial, with the Wi-Fi it needs to pass just cleared,
-    /// and give way. A step that fails leaves the mark for the next boot, and
-    /// this one serves what it has.
+    /// Only bank 0 forgets the confirmation. KM0 reads the record at every boot
+    /// but decides by bank 1's marker: with it not intact, as bank 0 boots after
+    /// stock, the record changes nothing, so a cut through the erase changes no
+    /// boot. On bank 1 this build's next boot would run a trial, with the Wi-Fi
+    /// it needs to pass just cleared, and give way. A step that fails leaves the
+    /// mark for the next boot, and this one serves what it has.
     fn handover_step<H: Hooks>(&mut self) -> Step {
         let Some(step) = self.handing_over else {
             return next(POLL_MS, None);

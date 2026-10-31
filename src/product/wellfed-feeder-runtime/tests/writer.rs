@@ -2067,29 +2067,57 @@ fn only_a_handover_on_bank_0_forgets_the_confirmation() {
 }
 
 /// A cut at each step of the clearing leaves the mark, and the next boot does
-/// the whole of it, keeping the identity.
+/// the whole of it, keeping the identity. Bank 0 forgets the confirmation
+/// whichever side of its erase the cut lands; bank 1 keeps it.
 #[test]
 fn a_cut_during_a_handover_repeats_it() {
+    use wellfed_core::ota::{self, CONFIRM_LEN};
     use wellfed_hal::plaf103::storage;
 
-    for cut in 1..9 {
-        let (guard, mut provider, identity) = paired_with_wifi();
-        plant_handover();
+    let confirmed = ota::confirm_record(&[0x55; 32], 5);
+    for bank in [0, 1] {
+        let (mut before, mut after) = (0, 0);
+        for cut in 1..9 {
+            let (guard, mut provider, identity) = paired_with_wifi();
+            fake::with(|h| h.running_bank = Some(bank));
+            let at = storage::CONFIRM.first as usize * 0x1000;
+            fake::with(|h| h.storage[at..at + CONFIRM_LEN].copy_from_slice(&confirmed));
+            plant_handover();
 
-        let first = reset_boot(&mut provider, Some(cut));
-        assert!(
-            !first.contains(&Record::HandoverDone { cleared: true }),
-            "the mark goes last: {first:?}"
-        );
-        let second = reset_boot(&mut provider, None);
+            let first = reset_boot(&mut provider, Some(cut));
+            assert!(
+                !first.contains(&Record::HandoverDone { cleared: true }),
+                "the mark goes last: {first:?}"
+            );
+            if sectors(storage::CONFIRM)[..CONFIRM_LEN] == confirmed {
+                before += 1;
+            } else {
+                after += 1;
+            }
+            let second = reset_boot(&mut provider, None);
 
-        assert!(
-            second.contains(&Record::HandoverDone { cleared: true }),
-            "after {cut} steps: {second:?}"
-        );
-        assert!(sectors(storage::NET).iter().all(|&byte| byte == 0xff));
-        assert_eq!(keys::identity_since(0).map(|(_, key)| key), Some(identity));
-        drop(guard);
+            assert!(
+                second.contains(&Record::HandoverDone { cleared: true }),
+                "after {cut} steps: {second:?}"
+            );
+            assert!(sectors(storage::NET).iter().all(|&byte| byte == 0xff));
+            assert_eq!(keys::identity_since(0).map(|(_, key)| key), Some(identity));
+            if bank == 0 {
+                assert!(
+                    sectors(storage::CONFIRM).iter().all(|&byte| byte == 0xff),
+                    "after {cut} steps"
+                );
+            } else {
+                assert_eq!(sectors(storage::CONFIRM)[..CONFIRM_LEN], confirmed);
+            }
+            drop(guard);
+        }
+        assert!(before > 0, "bank {bank}: a cut before the erase");
+        if bank == 0 {
+            assert!(after > 0, "a cut after the erase and before the mark");
+        } else {
+            assert_eq!(after, 0, "bank 1 never erases it");
+        }
     }
 }
 

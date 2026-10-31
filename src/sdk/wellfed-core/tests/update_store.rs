@@ -227,10 +227,10 @@ fn a_corrupted_record_falls_back_to_the_older_one() {
     assert_eq!(open(&mut f).record().state, State::Pending(candidate(2, 1)));
 }
 
-/// Going back to stock forgets the floor, and nothing that
-/// was a promise about keys.
+/// Going back to stock forgets the floor and a pending candidate, and nothing
+/// that was a promise about keys or a record that an image activated.
 #[test]
-fn starting_over_forgets_the_floor_only() {
+fn starting_over_forgets_the_floor_and_a_pending_candidate_only() {
     let mut f = FakeJournalFlash::with_unit(UNIT);
     let mut s = open(&mut f);
     s.set_activated(candidate(7, 1)).unwrap();
@@ -253,4 +253,9 @@ fn starting_over_forgets_the_floor_only() {
     let mut s = open(&mut f);
     s.start_over().unwrap();
     assert_eq!(open(&mut f).generation, generation);
+
+    let mut s = open(&mut f);
+    s.set_pending(candidate(9, 2)).unwrap();
+    s.start_over().unwrap();
+    assert_eq!(open(&mut f).record().state, State::None);
 }

@@ -504,19 +504,25 @@ impl<I: SlotIo> UpdateStore<I> {
     }
 
     /// The feeder went back to stock, so what comes next is a first install:
-    /// the floor goes. The candidate stays, so a stock image that activated
-    /// and never booted is still refused as failed rather than offered again;
+    /// the floor goes, and so does a pending candidate, which nothing could
+    /// cancel before a promotion needs the slot. An activated one stays, so
+    /// the same manifest is still refused as failed rather than offered again;
     /// the next install overwrites it. The retired ids stay, as a promise that
     /// outlives any firmware, and so do the release slot's key and bank 0's
     /// recorded image, which only say what is true of this feeder. Only the
     /// handover from stock's activation may call this. Writes nothing when
-    /// the floor is already 0, so repeating it after a cut costs no erase.
+    /// there is nothing to forget, so repeating it after a cut costs no erase.
     pub fn start_over(&mut self) -> Result<(), UpdateError> {
-        if self.record.min_version == 0 {
+        let state = match self.record.state {
+            State::Pending(_) => State::None,
+            kept => kept,
+        };
+        if self.record.min_version == 0 && self.record.state == state {
             return Ok(());
         }
         self.write(&Update {
             min_version: 0,
+            state,
             ..self.record
         })
     }

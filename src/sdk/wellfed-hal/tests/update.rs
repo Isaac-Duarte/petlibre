@@ -982,6 +982,36 @@ fn starting_over_still_refuses_stock_that_activated_and_never_booted() {
     assert!(matches!(store().record().state, State::Pending(_)));
 }
 
+/// A restore cut around its handover mark leaves stock pending, with nothing
+/// left to cancel it: starting over clears it, so the promotion goes through.
+#[test]
+fn starting_over_clears_a_pending_stock_so_the_promotion_goes_through() {
+    let _guard = start(0);
+    let payload = image(LEN);
+    let (stock, _) = stock_offer(&payload);
+    let pending = Candidate {
+        digest: offer::manifest_digest(&stock),
+        version: 3,
+        build_id: [0x22; 32],
+        kind: ImageKind::Stock,
+    };
+    let mut s = store();
+    s.set_pending(pending).unwrap();
+
+    let mut rig = Rig::bench(0);
+    assert_eq!(
+        rig.offer(&manifest(3, &payload), None),
+        Err(Refused::Pending),
+        "before the handover"
+    );
+
+    let mut s = store();
+    s.start_over().unwrap();
+    wellfed_hal::ota::update::store_started_over();
+
+    progress(rig.offer(&manifest(3, &payload), None));
+}
+
 #[test]
 fn a_replayed_version_needs_a_downgrade_statement_for_this_feeder_and_floor() {
     let _guard = start(0);

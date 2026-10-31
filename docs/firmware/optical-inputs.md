@@ -23,7 +23,7 @@ Receiver levels show beam state only. They do not show beam geometry, or how muc
 
 ## Reading the food beam at rest
 
-A feed reads the food beam as it runs. So that the low-food light and `Status.food` also follow a restart or a refill, the feeder reads it with no feed running: once 5 s after it is first free to, then every 10 minutes (`FOOD_READ_EVERY_MS`). A window that does not reach a level is tried again 35 s later (`FOOD_READ_RETRY_MS`). That gap is longer than the 30 s of verified-stopped outputs the [confirmation](ota-design.md#what-confirmation-proves) waits for, so retries can never starve it.
+A feed reads the food beam as it runs. So that the low-food light and `Status.food` also follow a restart or a refill, the feeder reads it with no feed running: once 5 s after it is first free to, then every minute (`FOOD_READ_EVERY_MS`). A window that does not reach a level is tried again 35 s later (`FOOD_READ_RETRY_MS`). That gap is longer than the 30 s of verified-stopped outputs the [confirmation](ota-design.md#what-confirmation-proves) waits for, so retries can never starve it.
 
 A window lights both emitters for 1.2 s (`FOOD_READ_MS`): the filter's 100 ms of settling, 1 s of bad readings, and a few samples of lag. The owner judges the level at the window's end, so a flicker inside it changes nothing. A window that ends between levels settles nothing. The level then goes to `Status.food` and the light. A later change is one `Food` event, like any other. A boot's first window records no event and writes nothing, since it can't tell whether anything happened to the hopper. A refill made while the feeder was off shows in the status and the light, not in History.
 
@@ -83,8 +83,8 @@ A passing run has the planned sequence and timing, every gap within the filter's
 ## Limits
 
 - **Food passing the outlet.** Stock latches food passage through the outlet beam. The probe resolves LOW runs to about 2 ms, but a real pulse needs motion. Feeds now count outlet-beam breaks as a lower bound ([calibration](calibration.md#delivered-food-estimate)).
-- **Emitter current, thermal duty and electrical OFF levels** are not measured. The probe's duty (40 % over two minutes, each window budgeted) is a bound, not a characterization. The windows at rest add 0.2 % continuously, about 3.3 % at worst while each one is retried (1.2 s lit, 35 s dark).
-- **Windows at rest** have run in simulation only. Whether the beam settles and reads as it does in a feed, with the motor still and nothing moving in the hopper, is unobserved.
+- **Emitter current, thermal duty and electrical OFF levels** are not measured. The probe's duty (40 % over two minutes, each window budgeted) is a bound, not a characterization. The windows at rest add 2 % continuously, about 3.3 % at worst while each one is retried (1.2 s lit, 35 s dark).
+- **Windows at rest** have run on the research unit: with the beam clear they read low food, and with the beam blocked by hand the next window cleared the light, with no feed and no fault. Real food in the hopper at rest is unobserved.
 - **Ambient light** on the receivers is not measured, and the owner does not yet check for a receiver lit with its emitter off ([jams and sensor faults](jams-and-sensor-faults.md#outlet-and-food-sensors)).
 
 ## Evidence

@@ -36,9 +36,10 @@ pub const FOOD_READ_BOUND_MS: u32 = FOOD_READ_BUDGET_MS + 1_000;
 /// settings' load), which would only make it give way.
 pub const FOOD_READ_FIRST_MS: u32 = 5_000;
 
-/// Between readings at rest. A refill shows within this long, and the
-/// emitters' duty stays at 0.2 %.
-pub const FOOD_READ_EVERY_MS: u32 = 10 * 60_000;
+/// Between readings at rest. A refill shows within this long, short enough
+/// for someone still standing at the feeder, and the emitters' duty stays at
+/// 2 %.
+pub const FOOD_READ_EVERY_MS: u32 = 60_000;
 
 /// Until the next try after a reading that gave way or settled on nothing.
 /// Longer than the confirmation's 30 s of outputs verified stopped

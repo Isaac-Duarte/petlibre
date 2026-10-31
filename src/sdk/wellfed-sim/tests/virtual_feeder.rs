@@ -1668,7 +1668,7 @@ fn a_boot_reading_finds_low_food_with_no_feed() {
 /// feed in between; until then the level stays as it was.
 #[test]
 fn a_refill_clears_low_food_at_the_next_idle_reading() {
-    let next = FOOD_DONE + 10 * 60_000;
+    let next = FOOD_DONE + 60_000;
     passing(
         vec![
             act(50, "inputs", &[7]),

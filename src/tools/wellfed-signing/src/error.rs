@@ -63,6 +63,9 @@ pub enum FrozenError {
     /// A manifest for another build than this review's.
     #[error("The manifest is for build {manifest}, the review for {review}")]
     OtherBuild { manifest: String, review: String },
+    /// A manifest signed over other bytes than this review's image.
+    #[error("The manifest is for image {manifest}, the review holds image {review}")]
+    OtherImage { manifest: String, review: String },
     /// The image names no key of its own to compare a signer with.
     #[error("The review's build records no built-in update key")]
     NoBuiltInKey,

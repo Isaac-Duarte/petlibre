@@ -271,6 +271,8 @@ impl Frozen {
     /// An installer carries its manifest from before the feeder has any
     /// enrolled key to trust, so only the image's built-in key can sign it.
     pub fn require_installable(&self, manifest: &[u8]) -> Result<()> {
+        self.require_same_image(manifest)?;
+
         let built_in = self
             .manifest
             .as_ref()
@@ -278,6 +280,22 @@ impl Frozen {
             .ok_or(FrozenError::NoBuiltInKey)?;
 
         require_built_in_signer(built_in, &self.build_id, manifest)
+    }
+
+    /// Refuse a `manifest` signed over other bytes than this review's image.
+    /// Two freezes of one build share its identity but not always its bytes,
+    /// and the feeder checks the hash only after writing every sector over
+    /// bank 1, which may hold the only copy of stock on the feeder.
+    pub fn require_same_image(&self, manifest: &[u8]) -> Result<()> {
+        let signed = offer::parse_manifest(manifest).map_err(Error::NotManifest)?;
+        let image: [u8; 32] = Sha256::digest(self.payload()).into();
+        require(signed.manifest.image_sha256 == image, || {
+            FrozenError::OtherImage {
+                manifest: hex::encode(&signed.manifest.image_sha256),
+                review: hex::encode(&image),
+            }
+            .into()
+        })
     }
 
     /// The pinned stock image as given, without a review directory: an
@@ -683,6 +701,30 @@ mod tests {
         assert!(matches!(
             require_built_in_signer(&public, &[0; 32], &signed(&built_in)),
             Err(Error::Frozen(FrozenError::OtherBuild { .. }))
+        ));
+    }
+
+    #[test]
+    fn a_manifest_for_other_bytes_of_the_same_build_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key");
+        keygen(&path, KeyScope::Bench).unwrap();
+        let key = Key::load(&path).unwrap();
+        let (checkout, review) = freeze(&build_image(), None);
+        let frozen = Frozen::open(checkout.path(), &review).unwrap();
+        let other_bytes = wellfed_image::fixtures::image_carrying(
+            format!("{} start build={BUILD} bank=1", Tag::Start).as_bytes(),
+        );
+        let (other_checkout, other_review) = freeze(&other_bytes, None);
+        let other = Frozen::open(other_checkout.path(), &other_review).unwrap();
+        let manifest = frozen.offer(&key, 9, Motion::Refused).unwrap();
+
+        frozen.require_same_image(&manifest).unwrap();
+
+        assert_eq!(other.build_id(), frozen.build_id());
+        assert!(matches!(
+            other.require_same_image(&manifest),
+            Err(Error::Frozen(FrozenError::OtherImage { .. }))
         ));
     }
 

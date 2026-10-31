@@ -15,8 +15,8 @@ This page tracks what works today and what comes next. It covers the replacement
 | --- | --- | --- |
 | Install over stock's own updater | Works | No soldering or UART needed. See [consumer installation](firmware/consumer-installation.md). |
 | Go back to stock over the air | Works | Using a stock image we serve. |
-| Guided installer (`wellfed install`) | Experimental | |
-| Roll back to your feeder's own stock image | Experimental | |
+| Guided installer (`wellfed install`) | Partial | Run from bank 0 with Bluetooth setup; not yet from stock |
+| Roll back to your feeder's own stock image | Partial | Run from the CLI and the app; a vendor app setup afterward has not been completed |
 | UART backup and recovery | Works | For developers. See [recovery](devices/plaf103/recovery.md). |
 | Updates over the air, with automatic rollback | Works | A new image that fails to start or hangs gives way to the previous one. |
 

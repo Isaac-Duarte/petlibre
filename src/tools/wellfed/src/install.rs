@@ -445,6 +445,10 @@ fn signer(args: &InstallArgs, review: &Review, key: Option<Key>) -> Result<Signe
             let manifest = std::fs::read(path).context("read --manifest")?;
             let version =
                 manifest_version(&manifest).context("--manifest is not a signed manifest")?;
+            let (frozen, _) = open_review(&args.review)?;
+            frozen
+                .require_same_image(&manifest)
+                .context("--manifest does not match --review")?;
             Ok(Signer::Manifest { manifest, version })
         }
         (None, Some(key)) => {
@@ -486,15 +490,7 @@ fn open_update_key(path: &Path) -> Result<Key> {
 /// the served build, or when it moves the motor at startup (signed only
 /// attended). With it, the checkout root the review sits under.
 fn frozen_review(review: &Path, build: &str) -> Result<(Frozen, PathBuf)> {
-    let absolute = std::path::absolute(review).context("--review")?;
-    let root = absolute
-        .ancestors()
-        .find(|dir| dir.file_name().is_some_and(|name| name == "private"))
-        .and_then(Path::parent)
-        .ok_or_else(|| Refused::NotPrivate {
-            review: review.to_path_buf(),
-        })?;
-    let frozen = Frozen::open(root, &absolute).context("verify the review to sign it")?;
+    let (frozen, root) = open_review(review)?;
     if frozen.build_id() != build {
         return Err(Refused::OtherBuild {
             signed: frozen.build_id(),
@@ -508,6 +504,21 @@ fn frozen_review(review: &Path, build: &str) -> Result<(Frozen, PathBuf)> {
         }
         .into());
     }
+    Ok((frozen, root))
+}
+
+/// The review, verified as the signer verifies it, and the checkout root it
+/// sits under.
+fn open_review(review: &Path) -> Result<(Frozen, PathBuf)> {
+    let absolute = std::path::absolute(review).context("--review")?;
+    let root = absolute
+        .ancestors()
+        .find(|dir| dir.file_name().is_some_and(|name| name == "private"))
+        .and_then(Path::parent)
+        .ok_or_else(|| Refused::NotPrivate {
+            review: review.to_path_buf(),
+        })?;
+    let frozen = Frozen::open(root, &absolute).context("verify the review to sign it")?;
     Ok((frozen, root.to_path_buf()))
 }
 

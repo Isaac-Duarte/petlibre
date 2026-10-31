@@ -120,7 +120,12 @@ void main() {
 
     // The last feed read food; the level has gone low since, with no event.
     final fedAt = DateTime(2026, 10, 30, 7, 30).millisecondsSinceEpoch;
-    session.status(fakeCard(food: FoodLevel.low, lastFed: fakeFed(atMs: fedAt)));
+    session.status(
+      fakeCard(
+        food: FoodLevel.low,
+        lastFed: fakeFed(atMs: fedAt),
+      ),
+    );
     await settle(tester);
 
     expect(find.text('Low'), findsOneWidget);
